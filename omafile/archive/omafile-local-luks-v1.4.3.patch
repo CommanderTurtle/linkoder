@@ -1,0 +1,78 @@
+diff --git i/bin/omafile-helper w/bin/omafile-helper
+index 0e1d600..1b5fa32 100755
+--- i/bin/omafile-helper
++++ w/bin/omafile-helper
+@@ -2703,6 +2703,7 @@ def flatten_lsblk(devices):
+     out = []
+     for d in devices or []:
+         out.append(d)
++        d["_has_children"] = len(d.get("children") or []) > 0
+         out.extend(flatten_lsblk(d.get("children")))
+     return out
+ 
+@@ -3453,7 +3454,7 @@ def op_samedev(req):
+ 
+ 
+ UNMOUNTABLE_FSTYPES = frozenset([
+-    "swap", "crypto_LUKS", "LVM2_member", "linux_raid_member", "zfs_member",
++    "swap", "LVM2_member", "linux_raid_member", "zfs_member",
+     "bcache", "ddf_raid_member", "isw_raid_member", "BitLocker",
+ ])
+ SYSTEM_PARTITION_TYPES = {
+@@ -3469,6 +3470,8 @@ def mountable_device(dev):
+     fstype = dev.get("fstype")
+     if not fstype or fstype in UNMOUNTABLE_FSTYPES:
+         return False
++    if fstype == "crypto_LUKS" and dev.get("_has_children"):
++        return False
+     if str(dev.get("parttype") or "").lower() in HIDDEN_PARTTYPES:
+         return False
+     return str(dev.get("path") or "").startswith("/dev/")
+@@ -3589,8 +3592,11 @@ def op_drives(req):
+             free = None
+             if mount and mount in space_by_mount:
+                 total, free = space_by_mount[mount]
++            label = dev.get("label")
++            if not label and dev.get("fstype") == "crypto_LUKS" and not mount:
++                label = "Encrypted"
+             drives.append({
+-                "name": dev.get("name"), "path": dev.get("path"), "label": dev.get("label"),
++                "name": dev.get("name"), "path": dev.get("path"), "label": label,
+                 "size": dev.get("size"), "fstype": dev.get("fstype"), "mount": mount,
+                 "removable": bool(dev.get("rm")), "free": free, "total": total,
+                 "mountable": not mount and mountable_device(dev),
+diff --git i/components/SidebarPlaces.qml w/components/SidebarPlaces.qml
+index 87d8317..2874fbd 100644
+--- i/components/SidebarPlaces.qml
++++ w/components/SidebarPlaces.qml
+@@ -61,7 +61,11 @@ Item {
+     if (!row) return
+     if (row.connect === true) { sidebar.connectServer(""); return }
+     if (row.server === true) { sidebar.connectServer(String(row.uri || "")); return }
+-    if (row.unmounted === true) { sidebar.mountDrive(row.device); return }
++    if (row.unmounted === true) {
++      if (row.luks === true) Quickshell.execDetached(["gio", "open", home])
++      else sidebar.mountDrive(row.device)
++      return
++    }
+     if (!row.path) return
+     if (inNewTab) sidebar.openInNewTab(row.path)
+     else sidebar.navigate(row.path)
+@@ -389,6 +393,7 @@ Item {
+           hideKey: hideKey,
+           orderId: hideKey,
+           unmounted: !isMounted,
++          luks: !isMounted && drive.fstype === "crypto_LUKS",
+           unmountable: isMounted && (drive.removable === true || userMount(drive.mount)),
+           removable: drive.removable === true,
+           free: Number(drive.free) || 0,
+@@ -640,7 +645,8 @@ Item {
+                       return
+                     }
+                     if (modelData.unmounted === true) {
+-                      sidebar.mountDrive(modelData.device)
++                      if (modelData.luks === true) Quickshell.execDetached(["gio", "open", home])
++                      else sidebar.mountDrive(modelData.device)
+                       return
+                     }
+                     if (mouse.button === Qt.MiddleButton) sidebar.openInNewTab(modelData.path)

@@ -1,0 +1,12 @@
+{
+  "name": "linkoder",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "linkoder": "./api.js"
+  },
+  "scripts": {
+    "start": "bun api.js"
+  }
+}

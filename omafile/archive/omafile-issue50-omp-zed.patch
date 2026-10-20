@@ -1,0 +1,89 @@
+diff --git i/Service.qml w/Service.qml
+index bd6103a..7297d91 100644
+--- i/Service.qml
++++ w/Service.qml
+@@ -1089,9 +1089,9 @@ Item {
+     else Quickshell.execDetached(["setsid", "uwsm-app", "--", "xdg-terminal-exec", "--dir=" + path])
+   }
+ 
+-  function openClaude(path) {
++  function openOmp(path) {
+     Quickshell.execDetached(["setsid", "uwsm-app", "--", "xdg-terminal-exec", "--dir=" + path,
+-      "bash", "-c", "claude; exec bash"])
++      "bash", "-c", "omp; exec bash"])
+   }
+ 
+   function openEditor(path) {
+@@ -1528,12 +1528,12 @@ Item {
+     }
+   }
+ 
+-  property bool claudeAvailable: false
++  property bool ompAvailable: false
+ 
+-  property Process claudeCheck: Process {
+-    command: ["sh", "-c", "command -v claude"]
++  property Process ompCheck: Process {
++    command: ["sh", "-c", "command -v omp"]
+     running: true
+-    onExited: function (code) { root.claudeAvailable = code === 0 }
++    onExited: function (code) { root.ompAvailable = code === 0 }
+   }
+ 
+   property Process portalStatus: Process {
+diff --git i/components/Browser.qml w/components/Browser.qml
+index cb86750..d0de25d 100644
+--- i/components/Browser.qml
++++ w/components/Browser.qml
+@@ -987,10 +987,11 @@ Item {
+     var items = []
+     var sep = 0
+     function separator() { items.push({ key: "sep" + (++sep), label: "", glyph: "" }) }
+-    var claude = service && service.claudeAvailable
++    var omp = service && service.ompAvailable
+     if (hasEntry) {
+       items.push({ key: "open", label: "Open", glyph: Icons.actionGlyph("open"), hint: "Enter" })
+       items.push({ key: "openwith", label: "Open with", glyph: Icons.actionGlyph("open") })
++      items.push({ key: "zed", label: "Open with zed", glyph: Icons.actionGlyph("open") })
+       if (entry.isDir)
+         items.push({ key: "opentab", label: "Open in new tab", glyph: Icons.actionGlyph("add"), hint: "Ctrl+Enter" })
+       else
+@@ -1017,8 +1018,8 @@ Item {
+         })
+         separator()
+         items.push({ key: "terminal", label: "Open in terminal", glyph: Icons.actionGlyph("terminal") })
+-        if (claude)
+-          items.push({ key: "claude", label: "Open Claude Code here", glyph: Icons.actionGlyph("terminal") })
++        if (omp)
++          items.push({ key: "omp", label: "Open 'omp' here", glyph: Icons.actionGlyph("terminal") })
+       }
+       separator()
+       if (trashed)
+@@ -1034,8 +1035,8 @@ Item {
+       items.push({ key: "paste", label: "Paste", glyph: Icons.actionGlyph("paste"), hint: "Ctrl+V", disabled: !service })
+       separator()
+       items.push({ key: "terminal", label: "Open in terminal", glyph: Icons.actionGlyph("terminal"), hint: "Ctrl+." })
+-      if (claude)
+-        items.push({ key: "claude", label: "Open Claude Code here", glyph: Icons.actionGlyph("terminal") })
++      if (omp)
++        items.push({ key: "omp", label: "Open 'omp' here", glyph: Icons.actionGlyph("terminal") })
+       separator()
+       items.push({
+         key: "bookmark",
+@@ -1267,6 +1268,7 @@ Item {
+     else if (key === "preview") showPreview(entry)
+     else if (key === "open") p.openEntry(entry)
+     else if (key === "openwith") showDialog("openwith", "Open " + (entry ? entry.name : "") + " with", "", entry)
++    else if (key === "zed") service.openWith(["zeditor"], entry.path, false)
+     else if (key === "opentab") newTab(activeSide, entry.path)
+     else if (key === "copy") doCopy()
+     else if (key === "cut") doCut()
+@@ -1284,7 +1286,7 @@ Item {
+     else if (key === "newfile") showDialog("newfile", "New file", "untitled", null)
+     else if (key === "bookmark") service.togglePinned(entry && entry.isDir ? entry.path : p.path)
+     else if (key === "terminal") service.openTerminal(entry && entry.isDir ? entry.path : p.path)
+-    else if (key === "claude") service.openClaude(entry && entry.isDir ? entry.path : p.path)
++    else if (key === "omp") service.openOmp(entry && entry.isDir ? entry.path : p.path)
+     else if (key === "refresh") p.refresh()
+     else if (key === "togglehidden") { p.showHidden = !p.showHidden; rememberSession() }
+     else if (key === "settings") showDialog("settings", "Settings", "", null)
