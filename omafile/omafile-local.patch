@@ -96,7 +96,7 @@ index 21196fd..fdfa2de 100755
  
  def dispatch(req):
 diff --git i/components/Browser.qml w/components/Browser.qml
-index 2a66b2f..7820345 100644
+index 2a66b2f..2a2125e 100644
 --- i/components/Browser.qml
 +++ w/components/Browser.qml
 @@ -49,6 +49,7 @@ Item {
@@ -175,7 +175,7 @@ index 2a66b2f..7820345 100644
 +    }
 +  }
 +  function lnkrOpen(url) {
-+    Quickshell.execDetached(["omarchy", "launch", "or", "focus", "webapp", "lnkr", url])
++    Quickshell.execDetached(["/bin/sh", "-c", "exec helium-browser --new-window \"$1\"", "_", url])
 +  }
 +  function runLnkr(mode, copyOnly) {
 +    var entry = menuEntry

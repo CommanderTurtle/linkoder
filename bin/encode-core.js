@@ -103,6 +103,8 @@ export async function encodeFile (job) {
   const extension = dot > 0 ? display.slice(dot + 1).toLowerCase() : "";
   const kindByExtension = { md: "markdown", markdown: "markdown", html: "html", htm: "html", js: "javascript", mjs: "javascript" };
   const kind = kindByExtension[extension] || "text";
+  // Non-md/html/js/txt UTF files resolve to a markdown payload with an
+  // embedded code block (language = the file extension, no hard mapping).
   // The lnkr media route (image/video/pdf/audio) defaults to v3: the most
   // robust per browser testing (v1/v4 are the confirmed-broken ones; v2 is
   // the post-fact fallback). Other routes keep the v1 default. An explicit
@@ -134,7 +136,7 @@ export async function encodeFile (job) {
     // The lnkr route (mkit's edit-button behaviour): the combined markdown
     // as a proper lnkr link, so archives open as a combined md through the
     // pipelines. Respects the v1-v4 codec and the rich/safe marker.
-    const md = combined.markdown + "style=jekyll\n";
+    const md = "style=jekyll\n" + combined.markdown;
     const payload = encoders[version](md, outputAlphabetASCII, "markdown").payload;
     const prefix = rich ? executablePrefixForKind("markdown") : "";
     return "#" + prefix + payload;
@@ -188,8 +190,20 @@ export async function encodeFile (job) {
     return "#" + route + ":" + encoders[version](shareUrl, outputAlphabetASCII, "text").payload;
   }
   const text = new TextDecoder("utf-8").decode(bytes);
-  const ephemeral = kind === "markdown" ? text + "style=jekyll\n" : text;
-  const payload = encoders[version](ephemeral, outputAlphabetASCII, kind).payload;
-  const prefix = rich ? executablePrefixForKind(kind) : "";
+  let ephemeral = text;
+  let encodeKind = kind;
+  if (kind === "markdown") {
+    // Prepend the jekyll style unless the file already designates one.
+    if (!/^\s*style\s*=\s*(jekyll|zensical)/m.test(text)) {
+      ephemeral = "style=jekyll\n" + text;
+    }
+  } else if (kind === "text" && extension && extension !== "txt") {
+    // Non-md/html/js/txt UTF: embed in a markdown code block.
+    const lang = extension;
+    ephemeral = "```" + lang + "\n" + text + "\n```";
+    encodeKind = "markdown";
+  }
+  const payload = encoders[version](ephemeral, outputAlphabetASCII, encodeKind).payload;
+  const prefix = rich ? executablePrefixForKind(encodeKind) : "";
   return "#" + prefix + payload;
 }
