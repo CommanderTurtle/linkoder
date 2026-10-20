@@ -2,3 +2,5 @@
 node_modules/
 rust/target/
 wasm/
+.encode-worker-*.sock
+.encode-worker-*.pid

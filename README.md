@@ -53,6 +53,19 @@ binary that is a thin lateral worker around the same JS codecs. It parses
 arguments, locates `bun`, and hands the encode to the lateral ln.kr/mk.it
 modules; nothing is re-implemented in Rust.
 
+Architecture: a hard-coded pool of 12 long-lived `bun` encode workers
+(`bin/encode-worker.js`) behind unix sockets in the linkoder root
+(`.encode-worker-<id>.sock` / `.encode-worker-<id>.pid`). Jobs rotate over
+time (wall-clock second modulo the pool), so concurrent encodes spread
+across workers; a busy worker is skipped, and missing members spawn on
+demand. All entry points (pool and cold) call the same `bin/encode-core.js`
+`encodeFile`, so every code is byte-identical no matter which path ran.
+
+Each job is under a 20 s timer (binary layer): on expiry the worker's job
+is SIGKILLed, the worker respawns, and the binary falls back to a plain
+Make share link (`#share:...` via the cold `--make` route) — so a slow
+encode degrades to the deflated share envelope instead of hanging.
+
 ```
 linkodec <file|-> [--rich|--safe] [--make] [--v1|--v2|--v3|--v4] [--name NAME] [--mime MIME]
 ```
@@ -81,6 +94,8 @@ linkodec document.pdf --v2 --safe
   `linkodec` binary exports `LINKODER_DIR` from its executable path, and the
   driver resolves `../ln.kr/docs` and `../mk.it/src/tools` from it;
   override with `LNKR_DOCS`/`MKIT_TOOLS`.
+- The 7z wasm resolves from the linkoder root (`wasm/7zz.wasm` symlink,
+  `BASE_URL` set under `bun`), so `mk.it` stays untouched.
 
 Build: `cargo build --release` in `rust/`, then copy
 `target/release/linkodec` to `bin/linkodec`.
