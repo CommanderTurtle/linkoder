@@ -1,38 +1,37 @@
-# xyzlab.omafile — Ln.Kr local patch (on the current state)
+# xyzlab.omafile — Ln.kr local patch (on the current state)
 
 The Omarchy Omafile plugin (user copy at `~/.config/omarchy/plugins/xyzlab.omafile`,
 a git checkout of `chr0nzz/omarchy-omafile`) carries this second local patch,
-`omafile-local.patch` -- the **Ln.Kr / Make previewer row**. The base is the
-current plugin state (v1.4.4 + the four-feature local patch, commit `c2cf091`),
-What it adds:
+`omafile-local.patch` — the **Ln.kr / Make previewer row**. The base is the
+current plugin state (v1.4.4 + the four-feature local patch, commit `c2cf091`).
 
-1. **Tri-Single-Line right-click row** for files, directly under *Open in
-   editor*: a literal `Ln.Kr (Rich) | Ln.Kr (Safe) | #share` text line, each
-   label an independent clickable hot region.
-   - **Ln.Kr (Rich)** / **Ln.Kr (Safe)**: the a.shel.sh v1 previewer link
-     (expanded viewer with web / inert), rendered in a Helium webapp window.
-   - **#share**: the `app.shel.sh/make/#share:` link (pdf/media/etc.; archives
-     become combined markdown inside the envelope).
-   - **Shift-click** any label: hoists the hashtag code (the part after `#`)
+## What it adds
+
+1. **A right-click row** for files, directly under *Open in editor*: a
+   `Link | Safe | #share` text line, each label an independent clickable hot
+   region. The row is visible whenever **exactly one file** is selected
+   (directories get no row). There is no enable toggle.
+   - **Link** (rich): the `a.shel.sh` ln.kr previewer link (v1–v4), opened in
+     a Helium webapp window (`omarchy launch or focus webapp lnkr <url>`;
+     repeated opens focus the same window).
+   - **Safe**: the inert (non-executable) ln.kr variant.
+   - **#share**: the `app.shel.sh/make/#share:` Make link (archives become
+     combined markdown inside the envelope).
+   - **Shift-click** any label: copies the hashtag code (the part after `#`)
      to the clipboard instead of opening it.
-2. **Settings toggle** in *Browsing*: "Ln.Kr previewer links" (off by default).
-   The menu row only appears when it is on.
-3. **First-enablement home sweep**: when the toggle is flipped on, omafile
-   does a depth-3 sweep of the home directory for the literal `linkoder`
-   folder (must contain `api.js`) and remembers it as `lnkrApiPath` from then
-   on (button clicks never re-sweep; a missing folder warns at flip time,
-   not at click time). Every label click runs
-   `bun <linkoder>/api.js <file> --rich|--safe|--make` and opens the printed
-   URL via `omarchy launch or focus webapp lnkr <url>` (repeated opens focus
-   the same Helium window). A bar warning shows if the API folder is missing
-   or the API fails.
+2. **A setting** in *Browsing*: **Ln.kr hashtag variant** (`lnkrVariant`,
+   `v1`/`v2`/`v3`/`v4`, default `v3`). Drives which ln.kr codec version the
+   `Link`/`Safe` labels use.
+3. **Binary auto-resolve**: the encoding is done by the lateral **linkodec**
+   Rust binary (this repository, `~/Documents/Dev/linkoder/bin/linkodec`). On
+   first use the helper resolves the binary from a known path, then a
+   lightweight folder-name scan for the `linkoder` folder (checking
+   `bin/linkodec` and `target/release/linkodec`), and caches it for the
+   session. No API-folder sweep, no `bun` at click time.
 
-The link itself is produced by the lateral **linkoder** API in
-`~/Documents/Dev/linkoder` (this repository), which wraps the `../ln.kr`
-codec framework and the `../mk.it` share envelope.
-
-Full write-up (issue format, annotated diff with line numbers, verification)
-in `omafile-patch-consolidated.md`.
+Encoding runs `linkodec <file> --rich|--safe|--make --v1..--v4` and opens the
+printed URL. Status prints to the bottom-right (`Ln.kr: encoding <name>`,
+`Ln.kr: opened <name>`, `Ln.kr: hashtag copied`, or the error).
 
 ## Files
 
@@ -41,8 +40,6 @@ in `omafile-patch-consolidated.md`.
 | `README.md` | This file |
 | `omafile-local.patch` | The single patch file, `git diff` against the current state (3 files) |
 | `apply.sh` | Idempotent apply/revert (`git apply`, `-R --check` first) |
-| `omafile-patch-consolidated.md` | Issue-format documentation of the patch |
-| `archive/` | Superseded patches and legacy working artifacts; see `archive/README.md` |
 
 ## Usage
 
@@ -52,10 +49,10 @@ in `omafile-patch-consolidated.md`.
 omarchy restart shell
 ```
 
-Then flip the toggle in *Settings → Browsing → Ln.Kr previewer links*. The
-sweep presumes the API at `~/Documents/Dev/linkoder` (found at depth 3 from
-the home directory); move it and clear the `lnkrApiPath` setting if it ever
-lives somewhere else.
+The patch presumes the linkodec binary at `~/Documents/Dev/linkoder/bin/linkodec`
+(or a `linkoder` folder findable from `~/Documents/Dev`, `~/Documents`,
+`~/src`, or `$HOME`). Move it and the resolve falls back to the folder scan;
+a missing binary warns at click time, not at menu-open time.
 
 After an upstream plugin update: re-run `apply.sh`; if it reports "neither
-forward nor reverse", upstream touched these lines -- rebase by hand.
+forward nor reverse", upstream touched these lines — rebase by hand.
