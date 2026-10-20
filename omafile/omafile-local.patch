@@ -1,8 +1,8 @@
-diff --git i/bin/omafile-helper w/bin/omafile-helper
-index 21196fd..fdfa2de 100755
---- i/bin/omafile-helper
+diff --git c/bin/omafile-helper w/bin/omafile-helper
+index 21196fd..f928c72 100755
+--- c/bin/omafile-helper
 +++ w/bin/omafile-helper
-@@ -4490,6 +4490,83 @@ def op_transcode(req, cancel_event):
+@@ -4490,6 +4490,98 @@ def op_transcode(req, cancel_event):
          outputs.append(os.path.join(os.path.dirname(path), stem + "-" + res + "." + fmt))
      send_done(req_id, outputs=outputs)
  
@@ -82,22 +82,38 @@ index 21196fd..fdfa2de 100755
 +        return
 +    base = "https://app.shel.sh/make/" if code.startswith("#share:") else "https://a.shel.sh/"
 +    send_done(req_id, code=code, url=base + code)
++def op_lnkrclipboard(req):
++     req_id = req["id"]
++     text = req.get("text")
++     if not isinstance(text, str) or text == "":
++         send_error(req_id, "EINVAL", "text required")
++         return
++     try:
++         subprocess.run(["wl-copy"], input=text.encode(),
++                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
++     except Exception as e:
++         send_error(req_id, "EINTERNAL", str(e))
++         return
++     send_done(req_id)
++
++
 +
  
  CANCELLABLE_OPS = {
      "list": op_list,
-@@ -4550,6 +4627,8 @@ SIMPLE_OPS = {
+@@ -4550,6 +4642,9 @@ SIMPLE_OPS = {
      "unwatch": op_unwatch,
      "baricon": op_baricon,
      "barsettings": op_barsettings,
 +    "lnkrresolve": op_lnkrresolve,
 +    "lnkreencode": op_lnkreencode,
++     "lnkrclipboard": op_lnkrclipboard,
  }
  
  def dispatch(req):
-diff --git i/components/Browser.qml w/components/Browser.qml
-index 2a66b2f..c42ce2c 100644
---- i/components/Browser.qml
+diff --git c/components/Browser.qml w/components/Browser.qml
+index 2a66b2f..0043590 100644
+--- c/components/Browser.qml
 +++ w/components/Browser.qml
 @@ -49,6 +49,7 @@ Item {
    property var menuEntry: null
@@ -129,7 +145,7 @@ index 2a66b2f..c42ce2c 100644
      menuOpen = false
      menuKind = ""
      if (!pickAllows(key)) return
-@@ -1526,6 +1535,70 @@ Item {
+@@ -1526,6 +1535,77 @@ Item {
      }
      else if (key === "shortcuts") showDialog("shortcuts", "Keyboard shortcuts", "", null)
    }
@@ -174,8 +190,16 @@ index 2a66b2f..c42ce2c 100644
 +      go()
 +    }
 +  }
-+  function lnkrOpen(url) {
++  function lnkrOpen(url, mode) {
++    if (url.length > 120000) {
++      service.request({ op: "lnkrclipboard", text: url }, {
++        onDone: function () { statusText = "Ln.kr: " + mode + " copied" },
++        onError: function (msg) { statusText = "Ln.kr: " + (typeof msg === "string" ? msg : "clipboard failed") }
++      })
++      return
++    }
 +    Quickshell.execDetached(["/bin/sh", "-c", "exec helium-browser \"$1\"", "_", url])
++    statusText = "Ln.kr: " + mode + " opened"
 +  }
 +  function runLnkr(mode, copyOnly) {
 +    var entry = menuEntry
@@ -193,14 +217,13 @@ index 2a66b2f..c42ce2c 100644
 +    }
 +    statusText = "Ln.kr: encoding " + name
 +    lnkrEncode(entry.path, mode, function (url) {
-+      lnkrOpen(url)
-+      statusText = "Ln.kr: opened " + name
++      lnkrOpen(url, mode)
 +    }, function (msg) { statusText = "Ln.kr: " + msg })
 +  }
    function runZoom(action) {
      if (action === "in") nudgeViewScale(0.1)
      else if (action === "out") nudgeViewScale(-0.1)
-@@ -2890,17 +2963,18 @@ Item {
+@@ -2890,17 +2970,18 @@ Item {
              required property int index
              readonly property bool isHeader: modelData.kind === "header"
              readonly property bool isZoom: modelData.kind === "zoom"
@@ -221,7 +244,7 @@ index 2a66b2f..c42ce2c 100644
                color: Util.alpha(Color.menu.text, 0.15)
              }
  
-@@ -3017,6 +3091,48 @@ Item {
+@@ -3017,6 +3098,48 @@ Item {
                  }
                }
              }
@@ -270,9 +293,9 @@ index 2a66b2f..c42ce2c 100644
            }
          }
        }
-diff --git i/manifest.json w/manifest.json
+diff --git c/manifest.json w/manifest.json
 index faf0841..155ec77 100644
---- i/manifest.json
+--- c/manifest.json
 +++ w/manifest.json
 @@ -48,7 +48,8 @@
        "gridCaption2": "none",
