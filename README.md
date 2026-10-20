@@ -82,9 +82,9 @@ linkodec note.md --rich        # m:...
 cat note.md | linkodec - --name note.md
 ```
 
-# A PDF as a v2 lnkr link with no web requests: the `#pdf:` render route is
-# inert (the viewer's network toggle stays off) — the static site decodes
-# the v2 payload to the deflated Make share URL and renders the PDF from it:
+- A PDF as a v2 lnkr link with no web requests: the `#pdf:` render route is
+- inert (the viewer's network toggle stays off) — the static site decodes
+- the v2 payload to the deflated Make share URL and renders the PDF from it:
 
 ```
 linkodec document.pdf --v2 --safe

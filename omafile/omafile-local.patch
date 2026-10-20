@@ -1,8 +1,8 @@
 diff --git c/bin/omafile-helper w/bin/omafile-helper
-index 21196fd..bc923a6 100755
+index 21196fd..14bdc1e 100755
 --- c/bin/omafile-helper
 +++ w/bin/omafile-helper
-@@ -4490,7 +4490,110 @@ def op_transcode(req, cancel_event):
+@@ -4490,7 +4490,111 @@ def op_transcode(req, cancel_event):
          outputs.append(os.path.join(os.path.dirname(path), stem + "-" + res + "." + fmt))
      send_done(req_id, outputs=outputs)
  
@@ -27,6 +27,7 @@ index 21196fd..bc923a6 100755
 +        root = os.path.join(base, "linkoder")
 +        candidates.append(os.path.join(root, "bin/linkodec"))
 +        candidates.append(os.path.join(root, "target/release/linkodec"))
++        candidates.append(os.path.join(root, "rust/target/release/linkodec"))
 +    return candidates
 +
 +
@@ -113,6 +114,14 @@ index 21196fd..bc923a6 100755
  CANCELLABLE_OPS = {
      "list": op_list,
      "search": op_search,
+@@ -4518,7 +4622,6 @@ SIMPLE_OPS = {
+     "cliptext": op_cliptext,
+     "clipimage": op_clipimage,
+     "clipclear": op_clipclear,
+-    "samedev": op_samedev,
+     "stat": op_stat,
+     "peek": op_peek,
+     "thumbtypes": op_thumbtypes,
 @@ -4550,6 +4653,10 @@ SIMPLE_OPS = {
      "unwatch": op_unwatch,
      "baricon": op_baricon,
