@@ -29,7 +29,7 @@ use std::process::{Child, Command, ExitCode, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const WORKERS: usize = 12;
-const JOB_TIMEOUT: Duration = Duration::from_secs(20);
+const JOB_TIMEOUT: Duration = Duration::from_secs(15);
 const SPAWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 const DRIVER: &str = r##"
