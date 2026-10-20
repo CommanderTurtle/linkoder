@@ -1,14 +1,14 @@
 diff --git c/bin/omafile-helper w/bin/omafile-helper
-index 21196fd..f928c72 100755
+index 21196fd..bc923a6 100755
 --- c/bin/omafile-helper
 +++ w/bin/omafile-helper
-@@ -4490,6 +4490,98 @@ def op_transcode(req, cancel_event):
+@@ -4490,7 +4490,110 @@ def op_transcode(req, cancel_event):
          outputs.append(os.path.join(os.path.dirname(path), stem + "-" + res + "." + fmt))
      send_done(req_id, outputs=outputs)
  
 +LNKR_VARIANTS = ("v1", "v2", "v3", "v4")
 +LNKR_MODES = ("rich", "safe", "make")
-+
+ 
 +
 +def lnkr_binary_candidates():
 +    # Known path first, then a lightweight foldername scan for the rust target.
@@ -97,22 +97,35 @@ index 21196fd..f928c72 100755
 +     send_done(req_id)
 +
 +
-+
- 
++def op_lnkrkill(req):
++     req_id = req["id"]
++     try:
++         subprocess.run(["pkill", "-f", "encode-worker.js"],
++                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
++         import glob
++         for f in glob.glob(os.path.expanduser("~/Documents/Dev/linkoder/.encode-worker-*")):
++             try: os.unlink(f)
++             except OSError: pass
++     except Exception as e:
++         send_error(req_id, "EINTERNAL", str(e))
++         return
++     send_done(req_id)
  CANCELLABLE_OPS = {
      "list": op_list,
-@@ -4550,6 +4642,9 @@ SIMPLE_OPS = {
+     "search": op_search,
+@@ -4550,6 +4653,10 @@ SIMPLE_OPS = {
      "unwatch": op_unwatch,
      "baricon": op_baricon,
      "barsettings": op_barsettings,
 +    "lnkrresolve": op_lnkrresolve,
 +    "lnkreencode": op_lnkreencode,
-+     "lnkrclipboard": op_lnkrclipboard,
++    "lnkrclipboard": op_lnkrclipboard,
++     "lnkrkill": op_lnkrkill,
  }
  
  def dispatch(req):
 diff --git c/components/Browser.qml w/components/Browser.qml
-index 2a66b2f..0043590 100644
+index 2a66b2f..0b5bdcb 100644
 --- c/components/Browser.qml
 +++ w/components/Browser.qml
 @@ -49,6 +49,7 @@ Item {
@@ -128,7 +141,7 @@ index 2a66b2f..0043590 100644
        items.push({ key: "openwith", label: "Open with", glyph: Icons.actionGlyph("open") })
        items.push({ key: "editor", label: "Open in editor", glyph: Icons.actionGlyph("editor") })
 +      // Ln.kr row: visible only when exactly one file is selected.
-+      if (p.selectedCount === 1 && !entry.isDir)
++      if (p.selectedCount === 1 && !entry.isDir && root.boolSetting("lnkrEnabled", false))
 +        items.push({ key: "lnkr", label: "", glyph: "", kind: "lnkr" })
        if (entry.isDir)
          items.push({ key: "opentab", label: "Open in new tab", glyph: Icons.actionGlyph("add"), hint: "Ctrl+Enter" })
@@ -145,7 +158,7 @@ index 2a66b2f..0043590 100644
      menuOpen = false
      menuKind = ""
      if (!pickAllows(key)) return
-@@ -1526,6 +1535,77 @@ Item {
+@@ -1526,6 +1535,81 @@ Item {
      }
      else if (key === "shortcuts") showDialog("shortcuts", "Keyboard shortcuts", "", null)
    }
@@ -190,16 +203,20 @@ index 2a66b2f..0043590 100644
 +      go()
 +    }
 +  }
++  function lnkrKill() {
++    service.request({ op: "lnkrkill" }, {})
++  }
 +  function lnkrOpen(url, mode) {
 +    if (url.length > 120000) {
 +      service.request({ op: "lnkrclipboard", text: url }, {
-+        onDone: function () { statusText = "Ln.kr: " + mode + " copied" },
++        onDone: function () { statusText = "Ln.kr: " + mode + " copied"; lnkrKill() },
 +        onError: function (msg) { statusText = "Ln.kr: " + (typeof msg === "string" ? msg : "clipboard failed") }
 +      })
 +      return
 +    }
-+    Quickshell.execDetached(["/bin/sh", "-c", "exec helium-browser \"$1\"", "_", url])
++    Quickshell.execDetached(["/bin/sh", "-c", "WS=$(hyprctl activeworkspace 2>/dev/null | awk '{print $2}'); H=$(hyprctl windows 2>/dev/null | grep -i helium | grep -c \"$WS\" 2>/dev/null); if [ \"${H:-0}\" -gt 0 ]; then exec helium-browser \"$1\"; else exec helium-browser --new-window \"$1\"; fi", "_", url])
 +    statusText = "Ln.kr: " + mode + " opened"
++    lnkrKill()
 +  }
 +  function runLnkr(mode, copyOnly) {
 +    var entry = menuEntry
@@ -223,7 +240,7 @@ index 2a66b2f..0043590 100644
    function runZoom(action) {
      if (action === "in") nudgeViewScale(0.1)
      else if (action === "out") nudgeViewScale(-0.1)
-@@ -2890,17 +2970,18 @@ Item {
+@@ -2890,17 +2974,18 @@ Item {
              required property int index
              readonly property bool isHeader: modelData.kind === "header"
              readonly property bool isZoom: modelData.kind === "zoom"
@@ -244,7 +261,7 @@ index 2a66b2f..0043590 100644
                color: Util.alpha(Color.menu.text, 0.15)
              }
  
-@@ -3017,6 +3098,48 @@ Item {
+@@ -3017,6 +3102,48 @@ Item {
                  }
                }
              }
@@ -293,6 +310,72 @@ index 2a66b2f..0043590 100644
            }
          }
        }
+@@ -4020,6 +4147,42 @@ Item {
+                     font.pixelSize: Style.font.caption
+                   }
+                 }
++                Column {
++                  width: settingsColumn.width
++                  spacing: Style.space(4)
++                  visible: root.settingsSection === "linkoder"
++
++                  Toggle {
++                    width: parent.width
++                    label: "Enable Linkoder"
++                    description: "Show the ln.kr encode row in the context menu"
++                    checked: root.boolSetting("lnkrEnabled", false)
++                    onClicked: root.applySettingNow("lnkrEnabled", !checked)
++                  }
++
++                  Dropdown {
++                    width: parent.width
++                    label: "Ln.kr version"
++                    value: root.textSetting("lnkrVariant", "v3")
++                    options: [
++                      { label: "v1", value: "v1" },
++                      { label: "v2", value: "v2" },
++                      { label: "v3", value: "v3" },
++                      { label: "v4", value: "v4" }
++                    ]
++                    onChanged: function (v) { root.applySettingNow("lnkrVariant", v) }
++                  }
++
++                  Text {
++                    textFormat: Text.PlainText
++                    width: parent.width
++                    visible: root.boolSetting("lnkrEnabled", false) && root.lnkrBinary === ""
++                    text: "Binary not yet resolved"
++                    color: Util.alpha(Color.popups.text, 0.5)
++                    font.family: Style.font.family
++                    font.pixelSize: Style.font.caption
++                  }
++                }
+               }
+             }
+           }
+@@ -4388,7 +4551,8 @@ Item {
+       { key: "deleting", label: "Deleting" },
+       { key: "commands", label: "Commands" },
+       { key: "bar", label: "Bar and trash" },
+-      { key: "drives", label: "Drives" }
++      { key: "drives", label: "Drives" },
++      { key: "linkoder", label: "Linkoder" }
+     ]
+   }
+ 
+@@ -4445,6 +4609,12 @@ Item {
+     } else if (key === "thumbnails") {
+       paneA.thumbnails = value
+       if (split) paneB.thumbnails = value
++    } else if (key === "lnkrEnabled" && value === true) {
++      lnkrBinary = ""
++      service.request({ op: "lnkrresolve" }, {
++        onDone: function (m) { lnkrBinary = String(m.path || "") },
++        onError: function () { lnkrBinary = "" }
++      })
+     }
+     rememberSession()
+   }
 diff --git c/manifest.json w/manifest.json
 index faf0841..155ec77 100644
 --- c/manifest.json

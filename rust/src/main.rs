@@ -256,6 +256,23 @@ fn worker_job(
     let text = String::from_utf8_lossy(&line);
     parse_worker_response(&text)
 }
+ /// Kill workers whose PID file is older than `max_age` (stale sweep).
+ fn sweep_stale_workers(r: &PathBuf, max_age: std::time::Duration) {
+     let now = SystemTime::now();
+     for i in 0..WORKERS {
+         let pf = worker_pidfile(r, i);
+         let meta = match fs::metadata(&pf) { Ok(m) => m, Err(_) => continue };
+         let modified = match meta.modified() { Ok(t) => t, Err(_) => continue };
+         let age = now.duration_since(modified).unwrap_or_default();
+         if age > max_age {
+             if let Some(pid) = read_pid(r, i) {
+                 let _ = nix_kill(pid);
+             }
+             let _ = fs::remove_file(&pf);
+             let _ = fs::remove_file(worker_sock(r, i));
+         }
+     }
+ }
 
 #[derive(Debug)]
 enum WorkerErr {
@@ -271,7 +288,7 @@ fn nix_kill(pid: u32) -> std::io::Result<()> {
 // SIGKILL without a libc dependency: /proc/<pid>/task/<pid>/... is overkill;
 // use the kill(1) binary via Command for portability of the kill itself.
 fn libc_kill(pid: u32) {
-    let _ = Command::new("kill").args(&["-9", &pid.to_string()]).spawn();
+     let _ = Command::new("kill").args(&["-9", &pid.to_string()]).status();
 }
 
 fn json_escape(s: &str) -> String {
@@ -502,16 +519,12 @@ fn main() -> ExitCode {
 
     // Pool path (needs a root to hold sockets/pidfiles).
     if let Some(r) = &root {
-        match worker_job(&bun, r, &file, &flags) {
+        sweep_stale_workers(r, std::time::Duration::from_secs(20));
+        let result = worker_job(&bun, r, &file, &flags);
+        match result {
             Ok(code) => {
                 let code = code.trim_end_matches('\n').to_string();
                 if code.len() > 1_000_000 {
-                    // Char-limit failure: the make-hashtag-as-src route overflowed
-                    // (deflating-a-deflate expands). Resolve the custom viewer via
-                    // the base64 transcoder (perfected mime) in the make hashtag's
-                    // place. v3 is always handed here (the most robust per
-                    // browser testing); the 1M cap (emit) and the 20 s timer
-                    // still apply to the result.
                     eprintln!("linkodec: char limit exceeded ({} chars), falling back to base64 transcoder", code.len());
                     let mut extra: Vec<String> = Vec::new();
                     if rich { extra.push("--rich".into()); }
@@ -527,11 +540,6 @@ fn main() -> ExitCode {
                 return emit(&code);
             }
             Err(WorkerErr::Timeout) => {
-                // 20 s timer: the lnkr route (make link as src) was too slow.
-                // The make link itself resolved and survives the 1M-char test,
-                // so instead of bailing to the raw #share link, honor the lnkr
-                // request with v4 — the strongest deflate, already as optimized
-                // as the make link. The 1M cap (emit) still applies.
                 eprintln!("linkodec: 20 s timer, falling back to v4 lnkr");
                 match cold_driver(&bun, Some(r), &file, &["--v4".into()], false, stdin_b64.as_deref()) {
                     Ok(out) => return emit(&out),
@@ -539,25 +547,12 @@ fn main() -> ExitCode {
                 }
             }
             Err(WorkerErr::Transport) => {
-                // Worker unusable: one-shot cold driver, same route.
                 let mut extra: Vec<String> = Vec::new();
-                if rich {
-                    extra.push("--rich".into());
-                }
-                if safe {
-                    extra.push("--safe".into());
-                }
-                if version != 0 {
-                    extra.push(format!("--v{version}"));
-                }
-                if !name.is_empty() {
-                    extra.push("--name".into());
-                    extra.push(name);
-                }
-                if !mime.is_empty() {
-                    extra.push("--mime".into());
-                    extra.push(mime);
-                }
+                if rich { extra.push("--rich".into()); }
+                if safe { extra.push("--safe".into()); }
+                if version != 0 { extra.push(format!("--v{version}")); }
+                if !name.is_empty() { extra.push("--name".into()); extra.push(name); }
+                if !mime.is_empty() { extra.push("--mime".into()); extra.push(mime); }
                 match cold_driver(&bun, Some(r), &file, &extra, false, stdin_b64.as_deref()) {
                     Ok(out) => return emit(&out),
                     Err(()) => return ExitCode::from(1),

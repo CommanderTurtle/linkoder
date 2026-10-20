@@ -93,8 +93,7 @@ server.listen(SOCK, () => {
     .catch(() => {});
 });
 
-process.on("exit", () => {
-  try {
-    fs.unlinkSync(PIDF);
-  } catch {}
-});
+ process.on("exit", () => {
+   try { fs.unlinkSync(PIDF); } catch {}
+   try { fs.unlinkSync(SOCK); } catch {}
+ });
