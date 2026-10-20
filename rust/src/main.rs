@@ -34,18 +34,39 @@ if (path === null) {
   process.exit(2);
 }
 
-const home = Bun.env.HOME || Bun.homedir();
-const LNKR = Bun.env.LNKR_DOCS || (home + "/Documents/Dev/ln.kr/docs");
-const MKIT = Bun.env.MKIT_TOOLS || (home + "/Documents/Dev/mk.it/src/tools");
+const p = await import("node:path");
+// The binary exports LINKODER_DIR: its own root, resolved laterally from
+// the executable path on first run. ln.kr and mk.it are siblings of it.
+// LNKR_DOCS / MKIT_TOOLS are test overrides; env is just the carrier.
+const LINKODER = Bun.env.LINKODER_DIR;
+if (!LINKODER) { console.error("linkodec: LINKODER_DIR unset (the binary exports its own root)"); process.exit(2); }
+const LNKR = Bun.env.LNKR_DOCS || p.resolve(LINKODER, "../ln.kr/docs");
+const MKIT = Bun.env.MKIT_TOOLS || p.resolve(LINKODER, "../mk.it/src/tools");
+
+// 7z-wasm locates its binary as BASE_URL + "wasm/7zz.wasm" (the vite
+// site path). Under bun that is a filesystem path, so point BASE_URL at
+// the linkoder root and keep a symlink to the mk.it package wasm there;
+// the lateral mk.it source stays untouched.
+if (typeof Bun !== "undefined" && !process.env.BASE_URL) {
+  const fs = await import("node:fs");
+  // (node:path is the p imported above)
+  const src = p.resolve(MKIT, "../../node_modules/7z-wasm/7zz.wasm");
+  const wasm = p.resolve(LINKODER, "wasm/7zz.wasm");
+  if (!fs.existsSync(wasm)) {
+    fs.mkdirSync(p.dirname(wasm), { recursive: true });
+    fs.symlinkSync(src, wasm);
+  }
+  process.env.BASE_URL = p.resolve(LINKODER) + "/";
+}
 
 const { compressTextV1, compressTextV2, compressTextV3, compressTextV4 } = await import(LNKR + "/text-compress.js");
 const { outputAlphabetASCII } = await import(LNKR + "/alphabets.js");
 const { executablePrefixForKind } = await import(LNKR + "/viewer-runtime.js");
 const { mediaLinkKind } = await import(LNKR + "/link-runtime.js");
-const { compress } = await import(LNKR + "/compress.js");
 const { encodeSharedFile, fileMime } = await import(MKIT + "/share.ts");
 const { combineArchive, isSupportedArchive } = await import(MKIT + "/archiveCombine.ts");
-const { imageViewerEval } = await import(MKIT + "/imageViewer.ts");
+const { imageViewerSource } = await import(MKIT + "/imageViewer.ts");
+const { videoViewerSource } = await import(LINKODER + "/video-viewer.js");
 
 const encoders = { 1: compressTextV1, 2: compressTextV2, 3: compressTextV3, 4: compressTextV4 };
 
@@ -66,31 +87,50 @@ if (safe && rich) { console.error("--rich and --safe are mutually exclusive"); p
 const mediaKind = mediaLinkKind("https://linkoder.local/" + display);
 const isArchive = isSupportedArchive({ name: display, type: "" });
 
-if (make || isArchive || mediaKind === "video") {
-  if (isArchive) {
-    const file = {
-      name: display,
-      size: bytes.length,
-      type: fileMime({ name: display, type: "" }),
-      arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
-    };
-    const combined = await combineArchive(file);
+if (isArchive) {
+  const file = {
+    name: display,
+    size: bytes.length,
+    type: fileMime({ name: display, type: "" }),
+    arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+  };
+  const combined = await combineArchive(file);
+  if (make) {
+    // The #share route: the Make envelope of the combined markdown.
     process.stdout.write("#share:" + share("combined.md", new TextEncoder().encode(combined.markdown), "text/markdown") + "\n");
   } else {
-    process.stdout.write("#share:" + share(display, bytes, mime) + "\n");
+    // The lnkr route (mkit's edit-button behaviour): the combined markdown
+    // as a proper lnkr link, so archives open as a combined md through the
+    // pipelines. Respects the v1-v4 codec and the rich/safe marker.
+    const md = combined.markdown + "style=jekyll\n";
+    const payload = encoders[version](md, outputAlphabetASCII, "markdown").payload;
+    const prefix = rich ? executablePrefixForKind("markdown") : "";
+    process.stdout.write("#" + prefix + payload + "\n");
   }
+} else if (make) {
+  process.stdout.write("#share:" + share(display, bytes, mime) + "\n");
 } else if (mediaKind === "image") {
-  // The superlink image wrapper: an executable JS viewer with the image
-  // embedded as a data URL. An image link is a JS link (r: marker).
-  const imageMime = mime || fileMime({ name: display, type: "" });
-  const js = imageViewerEval({ name: display, mime: imageMime, bytes });
+  // The superlink image wrapper: an executable JS viewer whose src is the
+  // file's Make share link. ln.kr accepts Make links as srcs, and Make links
+  // are deflated, so the embedding takes far less space than a base64 data
+  // URL. Regular utf text files do not take this route (direct v1 codec).
+  const shareUrl = "https://app.shel.sh/make/#share:" + share(display, bytes, mime);
+  const js = imageViewerSource(shareUrl);
+  const payload = encoders[version](js, outputAlphabetASCII, "javascript").payload;
+  const prefix = safe ? "" : executablePrefixForKind("javascript");
+  process.stdout.write("#" + prefix + payload + "\n");
+} else if (mediaKind === "video") {
+  // The video twin of the image wrapper: an executable JS <video> whose src
+  // is the file's Make share link (deflated, not a base64 data URL).
+  const shareUrl = "https://app.shel.sh/make/#share:" + share(display, bytes, mime);
+  const js = videoViewerSource(shareUrl);
   const payload = encoders[version](js, outputAlphabetASCII, "javascript").payload;
   const prefix = safe ? "" : executablePrefixForKind("javascript");
   process.stdout.write("#" + prefix + payload + "\n");
 } else if (mediaKind === "pdf" || mediaKind === "audio") {
   const shareUrl = "https://app.shel.sh/make/#share:" + share(display, bytes, mime);
   const route = mediaKind === "pdf" ? "pdf" : "media";
-  process.stdout.write("#" + route + ":" + compress(shareUrl, outputAlphabetASCII) + "\n");
+  process.stdout.write("#" + route + ":" + encoders[version](shareUrl, outputAlphabetASCII, "text").payload + "\n");
 } else {
   const text = new TextDecoder("utf-8").decode(bytes);
   const ephemeral = kind === "markdown" ? text + "style=jekyll\n" : text;
@@ -200,6 +240,12 @@ fn main() -> ExitCode {
     };
 
     let bun = find_bun();
+    // Lateral self-resolution: the binary lives at <linkoder>/bin/linkodec,
+    // so the root is two levels up. The driver resolves ln.kr/mk.it as
+    // siblings of it; the env var is just the carrier.
+    let root = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().and_then(|bin| bin.parent()).map(|r| r.to_path_buf()));
     let mut command = Command::new(&bun);
     command
         .arg("-e")
@@ -209,7 +255,11 @@ fn main() -> ExitCode {
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
-
+    if let Some(r) = &root {
+        if let Some(s) = r.to_str() {
+            command.env("LINKODER_DIR", s);
+        }
+    }
     match command.status() {
         Ok(status) => match status.code() {
             Some(c) if (0..=255).contains(&c) => ExitCode::from(c as u8),

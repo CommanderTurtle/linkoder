@@ -13,21 +13,27 @@ The premise of the shel.sh sites is that they are completely static: JS
 resolves the URLs on the client side, so **all share links have already been
 created until the end of time** -- the encoder only picks which one to print.
 
-- **link** -- a `a.shel.sh` v1 hashtag link for the file with the executable
-  viewer marker (`#m:` markdown, `#h:` html, `#r:` javascript; images take
-  the mk.it image-viewer wrapper, an executable JS link).
-- **safe** -- the same `a.shel.sh` v1 link in the inert form (no marker;
+- **link** -- a `a.shel.sh` lnkr hashtag link for the file with the
+  executable viewer marker (`#m:` markdown, `#h:` html, `#r:` javascript).
+  Images and video take an executable JS viewer link whose src is the
+  file's Make share link (deflated, not a base64 data URL); archives take
+  the combined markdown as a proper lnkr markdown link. Every route
+  respects the v1-v4 lnkr text format.
+- **safe** -- the same `a.shel.sh` lnkr link in the inert form (no marker;
   the recipient chooses Run).
-- **#share** -- an `app.shel.sh/make/#share:` MKIT/1 envelope link (the
-  right codec for video/media/etc.; archives become combined markdown
-  ephemerally).
+- **#share** -- an `app.shel.sh/make/#share:` MKIT/1 envelope link (the raw
+  file, or the combined markdown for archives).
 - Links open in a **Helium webapp window** via
   `omarchy launch or focus webapp lnkr <url>` (repeat opens focus the same
   window). **Shift-click** a label to hoist the hashtag code (the part after
   `#`) to the clipboard instead of opening it.
 
-Base: the current plugin state (v1.4.4 + the four-feature local patch,
-commit `c2cf091`), treated as upstream.
+Base: a clean upstream (v1.4.4) that is assumed to already carry the
+four-feature local transcoding patch (commit `c2cf091`). This patch is a
+pure additive layer on top of that base -- it only adds the lnkr/mkit
+integration utilising linkoder, nothing else -- and will ship as an
+additive open PR. The patched state lives in the config directory
+(`~/.config/omarchy/plugins/xyzlab.omafile`).
 
 ## The change
 
@@ -104,13 +110,13 @@ Four files, one behaviour:
   `~/Documents/Dev/linkoder`; `lnkreencode` (rich on a markdown file)
   returns a valid `a.shel.sh` URL; a bad mode answers `EINVAL`.
 - The linkoder API behind the row was exercised end-to-end: markdown, html,
-  js, pdf, mp3, mp4, png and zip inputs all print well-formed links, and
-  the payloads decode back through the `ln.kr` / `mk.it` decoders to the
-  original content (md carries the ephemeral `style=jekyll` + newline;
-  archives decode to `combined.md`; images decode to the image-viewer JS
-  with the data URL intact). The native `linkodec` worker's output is
-  byte-identical to `api.js` for every route, and its v2/v3/v4 text
-  payloads round-trip through the lateral `decompressText`.
+  js, pdf, mp3, mp4, png, zip and 7z inputs all print well-formed links,
+  and the payloads decode back through the `ln.kr` / `mk.it` decoders to
+  the original content (md carries the ephemeral `style=jekyll` + newline;
+  archives decode to the combined markdown; images/video decode to the JS
+  viewer with the Make share link as src). The native `linkodec` worker's
+  output is byte-identical to `api.js` for every route, and its v2/v3/v4
+  text payloads round-trip through the lateral `decompressText`.
 
 ## Open questions
 

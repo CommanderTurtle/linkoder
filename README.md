@@ -19,24 +19,26 @@ linkoder <file> [<file>...] [--rich | --safe | --make]
 
 | Input | Output |
 |---|---|
-| `.md` / `.markdown` | `https://a.shel.sh/#<v1>` — the text is encoded ephemerally with `style=jekyll` plus a newline appended |
-| `.html` / `.htm` | `https://a.shel.sh/#<v1>` |
-| `.js` / other text/code | `https://a.shel.sh/#<v1>` (text kind) |
-| `.pdf` | `https://a.shel.sh/#pdf:<v1>` — the payload is the file's Make share URL; the static site fetches it and renders the PDF |
-| audio (`.mp3`, `.wav`, `.ogg`, …) | `https://a.shel.sh/#media:<v1>` — same Make-URL pattern |
-| images (`.png`, `.jpg`, …) | `https://a.shel.sh/#r:<v1 js>` — the mk.it image-viewer wrapper (an executable JS link with the image embedded as a data URL; ln.kr also accepts Make links as srcs) |
-| video (`.mp4`, `.mov`, …) | `https://app.shel.sh/make/#share:<MKIT/1>` — the right codec (name & file extension) |
-| `.zip` / `.tar` / `.7z` | `https://app.shel.sh/make/#share:<MKIT/1>` — turned into combined markdown ephemerally first (`combined.md`) |
+| `.md` / `.markdown` | `https://a.shel.sh/#<v1-v4>` — the text is encoded ephemerally with `style=jekyll` plus a newline appended |
+| `.html` / `.htm` | `https://a.shel.sh/#<v1-v4>` |
+| `.js` / other text/code | `https://a.shel.sh/#<v1-v4>` (text kind) |
+| `.pdf` | `https://a.shel.sh/#pdf:<v1-v4>` — the payload is the file's Make share URL; the static site fetches it and renders the PDF |
+| audio (`.mp3`, `.wav`, `.ogg`, …) | `https://a.shel.sh/#media:<v1-v4>` — same Make-URL pattern |
+| images (`.png`, `.jpg`, …) | `https://a.shel.sh/#r:<v1-v4 js>` — the mk.it image-viewer wrapper: an executable JS link whose src is the file's Make share link (deflated, not a base64 data URL; ln.kr accepts Make links as srcs) |
+| video (`.mp4`, `.mov`, …) | `https://a.shel.sh/#r:<v1-v4 js>` — the video twin: an executable JS `<video>` whose src is the file's Make share link |
+| `.zip` / `.tar` / `.7z` | `https://a.shel.sh/#<v1-v4 md>` — the archive is turned into combined markdown first and encoded as a proper lnkr markdown link (mkit's edit-button behaviour); `--make` wraps the combined md in the `#share:` envelope instead |
 Flags:
 
 - `--safe` (default for documents): inert `#` link — no web, the recipient
   chooses Run.
 - `--rich`: expanded unique-origin viewer with network requests enabled
   (`#m:` markdown, `#h:` html, `#r:` javascript).
-- `--make`: force the `app.shel.sh/make/#share:` envelope (the default for
-  video/archives; images take the JS viewer link, pdf/audio the render types).
+- `--make`: force the `app.shel.sh/make/#share:` envelope (the raw file, or
+  the combined md for archives).
+- `--v1`..`--v4`: the lnkr text-format codec for every route (default v1,
+  the frozen wire format).
 
-Everything is v1 links, generated with the lateral frameworks — nothing is
+Everything is generated with the lateral frameworks — nothing is
 reinvented here:
 
 - `../ln.kr/docs/` — the v1 compressor, output alphabets, and the
@@ -63,11 +65,22 @@ linkodec note.md --rich        # m:...
 cat note.md | linkodec - --name note.md
 ```
 
+# A PDF as a v2 lnkr link with no web requests: the `#pdf:` render route is
+# inert (the viewer's network toggle stays off) — the static site decodes
+# the v2 payload to the deflated Make share URL and renders the PDF from it:
+
+```
+linkodec document.pdf --v2 --safe
+#pdf:<v2 payload>      # open as https://a.shel.sh/#pdf:<v2 payload>
+```
+
 - `--v1` is the default text codec (the frozen wire format); `--v2`/`--v3`/
   `--v4` select the lateral structural, dictionary, and deflate encoders.
 - `-` reads stdin; `--name`/`--mime` supply the identity the envelope needs.
-- The lateral roots default to `~/Documents/Dev/ln.kr/docs` and
-  `~/Documents/Dev/mk.it/src/tools`; override with `LNKR_DOCS`/`MKIT_TOOLS`.
+- The lateral roots resolve as siblings of the binary's own root: the
+  `linkodec` binary exports `LINKODER_DIR` from its executable path, and the
+  driver resolves `../ln.kr/docs` and `../mk.it/src/tools` from it;
+  override with `LNKR_DOCS`/`MKIT_TOOLS`.
 
 Build: `cargo build --release` in `rust/`, then copy
 `target/release/linkodec` to `bin/linkodec`.
