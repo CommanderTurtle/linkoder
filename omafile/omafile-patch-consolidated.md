@@ -5,18 +5,22 @@
 omafile already opens files in editors, terminals, and the system default
 app. This patch adds one more row to the right-click menu for files: the
 **Ln.Kr / Make previewer links**, driven by the lateral **linkoder** API
-(`~/Documents/Dev/linkoder`, a bun CLI over the `ln.kr` codec framework and
-the `mk.it` share envelope).
+(`~/Documents/Dev/linkoder`), which is a bun CLI plus a zero-dependency Rust
+worker (`bin/linkodec`) over the `ln.kr` codec framework and the `mk.it`
+share envelope.
 
 The premise of the shel.sh sites is that they are completely static: JS
 resolves the URLs on the client side, so **all share links have already been
 created until the end of time** -- the encoder only picks which one to print.
 
-- **Ln.Kr (Rich)** / **Ln.Kr (Safe)** -- a `a.shel.sh` v1 hashtag link for the
-  file (documents render in the previewer; `--rich` selects the expanded
-  unique-origin viewer with network enabled, `--safe` the inert form).
-- **#share** -- an `app.shel.sh/make/#share:` MKIT/1 envelope link (the right
-  codec for pdf/media/etc.; archives become combined markdown ephemerally).
+- **link** -- a `a.shel.sh` v1 hashtag link for the file with the executable
+  viewer marker (`#m:` markdown, `#h:` html, `#r:` javascript; images take
+  the mk.it image-viewer wrapper, an executable JS link).
+- **safe** -- the same `a.shel.sh` v1 link in the inert form (no marker;
+  the recipient chooses Run).
+- **#share** -- an `app.shel.sh/make/#share:` MKIT/1 envelope link (the
+  right codec for video/media/etc.; archives become combined markdown
+  ephemerally).
 - Links open in a **Helium webapp window** via
   `omarchy launch or focus webapp lnkr <url>` (repeat opens focus the same
   window). **Shift-click** a label to hoist the hashtag code (the part after
@@ -27,47 +31,63 @@ commit `c2cf091`), treated as upstream.
 
 ## The change
 
-Three files, one behaviour:
+Four files, one behaviour:
 
-1. `Service.qml` -- `lnkrApiDir` / `lnkrSweepHome` / `lnkrEncode` / `lnkrOpen`
-   plus a `lnkrWarning` string surfaced on the bar. The sweep runs **when the
-   settings toggle is flipped** (`applySettingNow`): a depth-3 `find ~` for
-   the literal `linkoder` folder (must contain `api.js`), the hit persisted
-   as `lnkrApiPath`. From then on `lnkrApiDir` only reads the persisted
-   setting -- button clicks never re-sweep, and a missing folder therefore
-   never throws at click time; the warning is set once, at flip time.
-2. `components/Browser.qml`
+1. `bin/omafile-helper` -- two new ops in `SIMPLE_OPS`:
+   - `lnkrsweep` -- a depth-3 `os.walk` of the home directory for the
+     literal `linkoder` folder that must contain `api.js`; first hit wins;
+     answers with the path (or an empty string).
+   - `lnkreencode` -- runs the encoder for one file: prefers the native
+     `bin/linkodec` worker in the linkoder folder, falls back to
+     `bun api.js`. `linkodec` prints only the hashtag code, so the op
+     reconstructs the base URL (`#share:` -> `app.shel.sh/make/`, anything
+     else -> `a.shel.sh/`); the legacy `api.js` already prints the full
+     URL and is used as-is. 120 s timeout.
+   Exec lives in the helper, not QML: `Quickshell.execute` is not a
+   function in Quickshell 0.3.2 (only `execDetached`/`env`/`reload`), which
+   is what silently broke the earlier QML-side sweep. The helper has a full
+   environment and can run bun.
+2. `Service.qml` -- `lnkrApiDir` / `lnkrSweepHome` / `lnkrEncode` /
+   `lnkrOpen` plus a `lnkrWarning` string surfaced on the bar. All three
+   working functions are async `request()` calls to the helper ops. The
+   sweep runs **when the settings toggle is flipped** (`applySettingNow`):
+   the hit is persisted as `lnkrApiPath`. From then on `lnkrApiDir` only
+   reads the persisted setting -- button clicks never re-sweep, and a
+   missing folder therefore never throws at click time; the warning is set
+   once, at flip time.
+3. `components/Browser.qml`
    - `contextActions`: files only, when the `lnkr` setting is on, a
      `{ key: "lnkr", kind: "lnkr" }` item directly under *Open in editor*.
    - the context-menu delegate renders the row for `kind === "lnkr"` as a
-     literal text line -- `Ln.Kr (Rich) | Ln.Kr (Safe) | #share` -- each
-     label an independent clickable hot region (caption size, its own hover
+     literal text line -- `link | safe | #share` -- each label an
+     independent clickable hot region (caption size, its own hover
      highlight, `|` separators dimmed). The row takes the normal 24 px item
      height and suppresses the separator line.
-   - `runLnkr(mode, copyOnly)`: encodes the `menuEntry` path, then either
-     copies the hashtag (after `#`) via `service.copyToClipboardText`
-     (shift-click) or opens the URL with `service.lnkrOpen`.
+   - `runLnkr(mode, copyOnly)`: encodes the `menuEntry` path through
+     `service.lnkrEncode(path, mode, onDone)` (callback form, since the
+     encode is now asynchronous), then either copies the hashtag (after
+     `#`) via `service.copyToClipboardText` (shift-click) or opens the URL
+     with `service.lnkrOpen`.
    - the bar's right-hand warning text now also shows `lnkrWarning`.
    - `browsingRows()`: new toggle "Ln.Kr previewer links" (off by default);
      `applySettingNow` runs `lnkrSweepHome()` when it is turned on.
-3. `tests/MockService.qml` -- the four functions + `lnkrWarning` recorded, so
-   the flow tests keep loading the scene.
+4. `tests/MockService.qml` -- the four functions (+ `lnkrWarning`) recorded;
+   `lnkrEncode` takes the optional `onDone` callback.
 
 ## Notes
 
-- The menu width is the fixed 230 px (`menuWidth`); the literal row is
-  caption-size and fits with margin to spare.
-- `Quickshell.execute` blocks the QML thread for the duration of the encode;
-  v1 compression is fast for normal documents. Huge files (many MB of
-  markdown) will make the click feel brief-to-noticeable. The #share path for
-  archives does more work (decompression + combining) and can take longer.
+- The menu width is the fixed 230 px (`menuWidth`); the literal row
+  `link | safe | #share` is caption-size and fits with margin to spare.
+- The encode is asynchronous (helper op, 120 s budget): the click never
+  blocks the QML thread. Archives do the most work (decompression +
+  combining) and can take longest.
 - The sweep matches the literal folder name `linkoder` (depth <= 3 from
-  `$HOME`, e.g. `~/Documents/Dev/linkoder`) and requires `api.js` inside it;
-  the first hit wins. It runs only at toggle-flip time; a later move of the
-  folder needs the `lnkrApiPath` setting cleared (or the toggle flipped
+  `$HOME`, e.g. `~/Documents/Dev/linkoder`) and requires `api.js` inside
+  it; the first hit wins. It runs only at toggle-flip time; a later move of
+  the folder needs the `lnkrApiPath` setting cleared (or the toggle flipped
   again) to re-run the sweep.
-- The `lnkr` row is hidden for directories and when the setting is off -- the
-  menu is byte-identical to upstream for everyone who leaves it off.
+- The `lnkr` row is hidden for directories and when the setting is off --
+  the menu is byte-identical to upstream for everyone who leaves it off.
 
 ## Verification
 
@@ -80,29 +100,33 @@ Three files, one behaviour:
 - Patch hygiene: `git apply --check` and `git apply -R --check` both pass on
   a clean `c2cf091` tree; `apply.sh` is idempotent (forward, reverse, and
   already-applied paths).
-- The sweep command (`find ~ -maxdepth 3 -type d -name linkoder`) was
-  exercised directly and returns `~/Documents/Dev/linkoder` at depth 3.
+- The helper ops were exercised headless: `lnkrsweep` returns
+  `~/Documents/Dev/linkoder`; `lnkreencode` (rich on a markdown file)
+  returns a valid `a.shel.sh` URL; a bad mode answers `EINVAL`.
 - The linkoder API behind the row was exercised end-to-end: markdown, html,
-  pdf, mp3, mp4, png and zip inputs all print well-formed URLs, and the
-  payloads decode back through the `ln.kr` / `mk.it` decoders to the
+  js, pdf, mp3, mp4, png and zip inputs all print well-formed links, and
+  the payloads decode back through the `ln.kr` / `mk.it` decoders to the
   original content (md carries the ephemeral `style=jekyll` + newline;
-  archives decode to `combined.md`).
+  archives decode to `combined.md`; images decode to the image-viewer JS
+  with the data URL intact). The native `linkodec` worker's output is
+  byte-identical to `api.js` for every route, and its v2/v3/v4 text
+  payloads round-trip through the lateral `decompressText`.
 
 ## Open questions
 
 - Nothing blocking. Possible follow-ups: keyboard hints for the row, a
-  per-folder "prefer #share" preference, and wiring the sweep to also accept a
-  user-set path (text setting) if the folder ever leaves the depth-3 cone.
+  per-folder "prefer #share" preference, and wiring the sweep to also accept
+  a user-set path (text setting) if the folder ever leaves the depth-3 cone.
 
 <details>
 <summary>Patch (omafile-local.patch, git diff against the current state)</summary>
 
 ```diff
 diff --git c/Service.qml w/Service.qml
-index d717c98..e007162 100644
+index d717c98..139f0cc 100644
 --- c/Service.qml
 +++ w/Service.qml
-@@ -1300,6 +1300,62 @@ Item {
+@@ -1300,6 +1300,63 @@ Item {
      Quickshell.execDetached(["sh", "-c", "printf %s \"$1\" | wl-copy", "omafile", String(text)])
    }
  
@@ -116,46 +140,47 @@ index d717c98..e007162 100644
 +  // First enablement: a depth-3 sweep of the home directory looking for the
 +  // literal "linkoder" folder that carries the API. Runs when the settings
 +  // toggle is flipped; the hit is persisted as lnkrApiPath and reused from
-+  // then on (button clicks never re-sweep).
++  // then on (label clicks never re-sweep).
 +  function lnkrSweepHome() {
-+    var out = ""
-+    try {
-+      out = String(Quickshell.execute(["sh", "-c",
-+        "find ~ -maxdepth 3 -type d -name linkoder 2>/dev/null | head -5"]) || "")
-+    } catch (e) { out = "" }
-+    var lines = out.split("\n")
-+    for (var i = 0; i < lines.length; i++) {
-+      var dir = String(lines[i]).trim()
-+      if (!dir) continue
-+      var ok = ""
-+      try {
-+        ok = String(Quickshell.execute(["sh", "-c", "test -f \"$1/api.js\" && echo ok", "omafile", dir]) || "")
-+      } catch (e) { ok = "" }
-+      if (ok.indexOf("ok") >= 0) {
-+        updateSetting("lnkrApiPath", dir)
-+        lnkrWarning = ""
-+        return dir
++    request({ op: "lnkrsweep" }, {
++      onDone: function (m) {
++        var dir = String(m.path || "")
++        if (dir) {
++          updateSetting("lnkrApiPath", dir)
++          lnkrWarning = ""
++        } else {
++          lnkrWarning = "Ln.Kr: the linkoder API folder was not found under your home directory"
++        }
++      },
++      onError: function (e) {
++        lnkrWarning = "Ln.Kr: the home sweep failed"
 +      }
-+    }
-+    lnkrWarning = "Ln.Kr: the linkoder API folder was not found under your home directory"
-+    return ""
++    })
 +  }
 +
-+  function lnkrEncode(path, mode) {
++  function lnkrEncode(path, mode, onDone) {
 +    var dir = lnkrApiDir()
-+    if (!dir) return ""
-+    var out = ""
-+    try {
-+      out = String(Quickshell.execute(["sh", "-c", "bun \"$1/api.js\" \"$2\" --$3 2>/dev/null",
-+        "omafile", dir, path, mode]) || "")
-+    } catch (e) { out = "" }
-+    var url = out.trim().split("\n").pop()
-+    if (!/^https:\/\//.test(url)) {
-+      lnkrWarning = "Ln.Kr: the linkoder API did not return a link"
-+      return ""
++    if (!dir) {
++      if (onDone) onDone("")
++      return
 +    }
-+    lnkrWarning = ""
-+    return url
++    request({ op: "lnkrencode", dir: dir, path: path, mode: mode }, {
++      onDone: function (m) {
++        var url = String(m.url || "")
++        if (!/^https:\/\//.test(url)) {
++          lnkrWarning = "Ln.Kr: the linkoder API did not return a link"
++          if (onDone) onDone("")
++          return
++        }
++        lnkrWarning = ""
++        if (onDone) onDone(url)
++        else lnkrOpen(url)
++      },
++      onError: function (e) {
++        lnkrWarning = "Ln.Kr: the linkoder API did not return a link"
++        if (onDone) onDone("")
++      }
++    })
 +  }
 +
 +  function lnkrOpen(url) {
@@ -165,8 +190,124 @@ index d717c98..e007162 100644
    function mountDrive(devicePath, onDone, onError) {
      return request({ op: "mountdev", device: String(devicePath) }, {
        onDone: function (m) {
+diff --git c/bin/omafile-helper w/bin/omafile-helper
+index c1a405d..6ae3650 100755
+--- c/bin/omafile-helper
++++ w/bin/omafile-helper
+@@ -4364,6 +4364,102 @@ def op_transcode(req, cancel_event):
+     send_done(req_id, outputs=outputs)
+ 
+ 
++LNKR_MODES = ("rich", "safe", "make")
++
++
++def lnkr_bun():
++    # Prefer a trusted location; fall back to the user's own PATH (bun is a
++    # user-installed tool, typically in ~/.bun/bin or a mise shim).
++    try:
++        return trusted_program("bun")
++    except FileNotFoundError:
++        pass
++    for directory in os.environ.get("PATH", "").split(os.pathsep):
++        candidate = os.path.join(directory, "bun")
++        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
++            return candidate
++    raise FileNotFoundError(errno.ENOENT, "no bun executable found")
++
++
++def op_lnkrsweep(req):
++    # Depth-3 sweep of the home directory for the literal "linkoder" folder
++    # that carries the API (must contain api.js). First hit wins.
++    req_id = req["id"]
++    home = HOME
++    found = ""
++    for dirpath, dirnames, _ in os.walk(home, topdown=True, followlinks=False):
++        rel = os.path.relpath(dirpath, home)
++        depth = 0 if rel == "." else rel.count(os.sep) + 1
++        if depth <= 2 and "linkoder" in dirnames:
++            candidate = os.path.join(dirpath, "linkoder")
++            if os.path.isfile(os.path.join(candidate, "api.js")):
++                found = candidate
++                break
++        if depth >= 3:
++            dirnames[:] = []
++    send_done(req_id, path=found)
++
++
++def op_lnkreencode(req):
++    req_id = req["id"]
++    api_dir = req.get("dir")
++    path = req.get("path")
++    mode = req.get("mode")
++    if (not isinstance(api_dir, str) or not os.path.isabs(api_dir)
++            or not isinstance(path, str) or not os.path.isabs(path)
++            or mode not in LNKR_MODES):
++        send_error(req_id, "EINVAL",
++                   "absolute dir and path and a mode (rich, safe, make) are required")
++        return
++    if not os.path.isfile(path):
++        send_error(req_id, "ENOENT", "no such file", path)
++        return
++    binary = os.path.join(api_dir, "bin", "linkodec")
++    if os.path.isfile(binary) and os.access(binary, os.X_OK):
++        cmd = [binary, path, "--" + mode]
++    else:
++        if not os.path.isfile(os.path.join(api_dir, "api.js")):
++            send_error(req_id, "ENOENT", "no linkoder API in the folder", api_dir)
++            return
++        try:
++            bun = lnkr_bun()
++        except FileNotFoundError:
++            send_error(req_id, "EUNSUPPORTED", "bun is not installed")
++            return
++        cmd = [bun, os.path.join(api_dir, "api.js"), path, "--" + mode]
++    env = trusted_env()
++    env["PATH"] = os.environ.get("PATH", "/usr/bin:/bin")
++    try:
++        proc = subprocess.run(
++            cmd,
++            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
++            env=env, timeout=120, check=False)
++    except (OSError, subprocess.TimeoutExpired) as e:
++        send_error(req_id, errno_code(e), "linkoder encode failed", path)
++        return
++    if proc.returncode != 0:
++        message = proc.stderr.decode("utf-8", "replace").strip()
++        send_error(req_id, "ELNKR", message or "linkoder encode failed", path)
++        return
++    # The native worker prints only the hashtag code; the legacy api.js
++    # prints the full URL. Reconstruct the base from the code when needed.
++    url = ""
++    for line in proc.stdout.decode("utf-8", "replace").splitlines():
++        line = line.strip()
++        if line.startswith("https://"):
++            url = line
++        elif line.startswith("#"):
++            base = ("https://app.shel.sh/make/" if line.startswith("#share:")
++                    else "https://a.shel.sh/")
++            url = base + line
++        if url:
++            break
++    if not url:
++        send_error(req_id, "ELNKR", "linkoder did not return a link", path)
++        return
++    send_done(req_id, url=url)
++
++
+ CANCELLABLE_OPS = {
+     "list": op_list,
+     "search": op_search,
+@@ -4422,6 +4518,8 @@ SIMPLE_OPS = {
+     "unwatch": op_unwatch,
+     "baricon": op_baricon,
+     "barsettings": op_barsettings,
++    "lnkrsweep": op_lnkrsweep,
++    "lnkreencode": op_lnkreencode,
+ }
+ 
+ def dispatch(req):
 diff --git c/components/Browser.qml w/components/Browser.qml
-index 2a66b2f..67031b3 100644
+index 2a66b2f..e8a54ed 100644
 --- c/components/Browser.qml
 +++ w/components/Browser.qml
 @@ -1160,6 +1160,8 @@ Item {
@@ -178,7 +319,7 @@ index 2a66b2f..67031b3 100644
        if (entry.isDir)
          items.push({ key: "opentab", label: "Open in new tab", glyph: Icons.actionGlyph("add"), hint: "Ctrl+Enter" })
        else
-@@ -1525,6 +1527,19 @@ Item {
+@@ -1525,6 +1527,20 @@ Item {
        showDialog("settings", "Settings", "", null)
      }
      else if (key === "shortcuts") showDialog("shortcuts", "Keyboard shortcuts", "", null)
@@ -187,18 +328,19 @@ index 2a66b2f..67031b3 100644
 +  function runLnkr(mode, copyOnly) {
 +    var entry = menuEntry
 +    if (!entry || !service) return
-+    var url = service.lnkrEncode(entry.path, mode)
-+    if (!url) return
 +    if (copyOnly) {
-+      var hash = url.indexOf("#") >= 0 ? url.slice(url.indexOf("#") + 1) : url
-+      service.copyToClipboardText(hash)
++      service.lnkrEncode(entry.path, mode, function (url) {
++        if (!url) return
++        var hash = url.indexOf("#") >= 0 ? url.slice(url.indexOf("#") + 1) : url
++        service.copyToClipboardText(hash)
++      })
 +      return
 +    }
-+    service.lnkrOpen(url)
++    service.lnkrEncode(entry.path, mode)
    }
    function runZoom(action) {
      if (action === "in") nudgeViewScale(0.1)
-@@ -2829,7 +2844,7 @@ Item {
+@@ -2829,7 +2845,7 @@ Item {
            anchors.rightMargin: Style.space(10)
            anchors.verticalCenter: parent.verticalCenter
            visible: text !== ""
@@ -207,7 +349,7 @@ index 2a66b2f..67031b3 100644
            color: Color.urgent
            font.family: Style.font.family
            font.pixelSize: Style.font.caption
-@@ -2890,17 +2905,18 @@ Item {
+@@ -2890,17 +2906,18 @@ Item {
              required property int index
              readonly property bool isHeader: modelData.kind === "header"
              readonly property bool isZoom: modelData.kind === "zoom"
@@ -228,7 +370,7 @@ index 2a66b2f..67031b3 100644
                color: Util.alpha(Color.menu.text, 0.15)
              }
  
-@@ -3017,6 +3033,55 @@ Item {
+@@ -3017,6 +3034,55 @@ Item {
                  }
                }
              }
@@ -242,8 +384,8 @@ index 2a66b2f..67031b3 100644
 +
 +              Repeater {
 +                model: menuRow.isLnkr ? [
-+                  { mode: "rich", label: "Ln.Kr (Rich)" },
-+                  { mode: "safe", label: "Ln.Kr (Safe)" },
++                  { mode: "rich", label: "link" },
++                  { mode: "safe", label: "safe" },
 +                  { mode: "make", label: "#share" }
 +                ] : []
 +
@@ -284,18 +426,18 @@ index 2a66b2f..67031b3 100644
            }
          }
        }
-@@ -4405,7 +4470,9 @@ Item {
+@@ -4405,7 +4471,9 @@ Item {
        { key: "rememberFolderViews", label: "Remember the view for each folder",
          description: "A folder opens in the view you last picked there. Other folders open in the default view" },
        { key: "extractOnOpen", label: "Extract archives when opened", fallback: false,
 -        description: "Double click or Enter extracts zip, tar, 7z and rar files next to themselves instead of opening them in your default app" }
 +        description: "Double click or Enter extracts zip, tar, 7z and rar files next to themselves instead of opening them in your default app" },
 +      { key: "lnkr", label: "Ln.Kr previewer links", fallback: false,
-+        description: "Show the Ln.Kr (Rich) | Ln.Kr (Safe) | Make row in the right-click menu; links open in a Helium webapp window. On first enable, omafile looks for the linkoder folder under your home directory" }
++        description: "Show the link | safe | #share row in the right-click menu; links open in a Helium webapp window. On first enable, omafile looks for the linkoder folder under your home directory" }
      ]
    }
  
-@@ -4445,6 +4512,8 @@ Item {
+@@ -4445,6 +4513,8 @@ Item {
      } else if (key === "thumbnails") {
        paneA.thumbnails = value
        if (split) paneB.thumbnails = value
@@ -305,7 +447,7 @@ index 2a66b2f..67031b3 100644
      rememberSession()
    }
 diff --git c/tests/MockService.qml w/tests/MockService.qml
-index 6d0dcfb..651c45b 100644
+index 6d0dcfb..42c8131 100644
 --- c/tests/MockService.qml
 +++ w/tests/MockService.qml
 @@ -152,6 +152,11 @@ QtObject {
@@ -315,47 +457,11 @@ index 6d0dcfb..651c45b 100644
 +  property string lnkrWarning: ""
 +  function lnkrApiDir() { record("lnkrApiDir", []); return "" }
 +  function lnkrSweepHome() { record("lnkrSweepHome", []); return "" }
-+  function lnkrEncode(path, mode) { record("lnkrEncode", [path, mode]); return "" }
++  function lnkrEncode(path, mode, onDone) { record("lnkrEncode", [path, mode]); if (onDone) onDone("") }
 +  function lnkrOpen(url) { record("lnkrOpen", [url]) }
    function emptyTrash(onDone) { record("emptyTrash", []); trashCount = 0; if (onDone) onDone({}) }
    function peekFile(path, limit, onDone, onError) { record("peekFile", [path]); onDone({ text: "key: value\n", binary: false, truncated: false }) }
    function openWith(command, path, inTerminal) { record("openWith", [command, path, inTerminal]) }
 ```
-
-</details>
-
-<details>
-<summary>linkoder API (the encoder behind the row) -- outline</summary>
-
-`~/Documents/Dev/linkoder/api.js` (bun, ESM). Lateral imports, nothing
-reinvented:
-
-- `../ln.kr/docs/text-compress.js` -- `compressTextV1` (v1 document payloads)
-- `../ln.kr/docs/compress.js` -- `compress` (URL-target payloads for the
-  `#pdf:` / `#media:` render types)
-- `../ln.kr/docs/alphabets.js` -- `outputAlphabetASCII`
-- `../ln.kr/docs/viewer-runtime.js` -- `executablePrefixForKind` (`m:`, `h:`,
-  `r:` rich markers)
-- `../ln.kr/docs/link-runtime.js` -- `mediaLinkKind` (image/video/audio/pdf
-  by extension)
-- `../mk.it/src/tools/share.ts` -- `encodeSharedFile` / `fileMime` (MKIT/1
-  envelope, always `app.shel.sh/make/#share:`)
-- `../mk.it/src/tools/archiveCombine.ts` -- `combineArchive` (zip/tar/7z ->
-  combined markdown, ephemerally)
-
-Mapping (file with an existing extension in, one previewer URL out):
-
-| Input | Output |
-|---|---|
-| `.md` | `a.shel.sh/#<v1>` (ephemerally `style=jekyll` + newline); `--rich` -> `#m:` |
-| `.html` | `a.shel.sh/#<v1>`; `--rich` -> `#h:` |
-| `.js` / text/code | `a.shel.sh/#<v1>`; `--rich` -> `#r:` (js) |
-| `.pdf` | `a.shel.sh/#pdf:<v1 of the Make share URL>` |
-| audio | `a.shel.sh/#media:<v1 of the Make share URL>` |
-| video, images | `app.shel.sh/make/#share:<MKIT/1>` |
-| `.zip` / `.tar` / `.7z` | `app.shel.sh/make/#share:` (combined markdown, `combined.md`) |
-
-`.env` (resolved from `.env-example` on first run) carries one setting:
-`WORKERS` (concurrent encodes, CPU-based).
 
 </details>

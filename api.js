@@ -23,6 +23,7 @@ import { executablePrefixForKind } from "../ln.kr/docs/viewer-runtime.js";
 import { encodeSharedFile, fileMime } from "../mk.it/src/tools/share.ts";
 import { mediaLinkKind } from "../ln.kr/docs/link-runtime.js";
 import { combineArchive, isSupportedArchive } from "../mk.it/src/tools/archiveCombine.ts";
+import { imageViewerEval } from "../mk.it/src/tools/imageViewer.ts";
 import { compress } from "../ln.kr/docs/compress.js";
 
 const A_SHEL = "https://a.shel.sh/";
@@ -100,10 +101,19 @@ async function encodeOne (path, flags) {
   const mediaKind = mediaLinkKind(`https://linkoder.local/${name}`);
   const isArchive = isSupportedArchive({ name, type: "" });
 
-  if (flags.make || isArchive || mediaKind === "video" || mediaKind === "image") {
+  if (flags.make || isArchive || mediaKind === "video") {
     if (isArchive) return encodeArchive(path);
     const bytes = await readFile(path);
     return makeShareURL(name, bytes);
+  }
+  if (mediaKind === "image") {
+    // The superlink image wrapper: an executable JS viewer with the image
+    // embedded as a data URL. An image link is a JS link (r: marker).
+    const bytes = await readFile(path);
+    const js = imageViewerEval({ name, mime: fileMime({ name, type: "" }), bytes });
+    const payload = compressTextV1(js, outputAlphabetASCII, "javascript").payload;
+    const prefix = flags.safe ? "" : executablePrefixForKind("javascript");
+    return `${A_SHEL}#${prefix}${payload}`;
   }
   if (mediaKind === "pdf" || mediaKind === "audio") {
     const bytes = await readFile(path);

@@ -1,0 +1,16 @@
+[package]
+name = "linkodec"
+version = "0.1.0"
+edition = "2021"
+description = "Ultrafast lateral worker for the ln.kr / mk.it hashtag encoders"
+
+[[bin]]
+name = "linkodec"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

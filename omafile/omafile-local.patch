@@ -1,8 +1,8 @@
 diff --git c/Service.qml w/Service.qml
-index d717c98..e007162 100644
+index d717c98..139f0cc 100644
 --- c/Service.qml
 +++ w/Service.qml
-@@ -1300,6 +1300,62 @@ Item {
+@@ -1300,6 +1300,63 @@ Item {
      Quickshell.execDetached(["sh", "-c", "printf %s \"$1\" | wl-copy", "omafile", String(text)])
    }
  
@@ -16,46 +16,47 @@ index d717c98..e007162 100644
 +  // First enablement: a depth-3 sweep of the home directory looking for the
 +  // literal "linkoder" folder that carries the API. Runs when the settings
 +  // toggle is flipped; the hit is persisted as lnkrApiPath and reused from
-+  // then on (button clicks never re-sweep).
++  // then on (label clicks never re-sweep).
 +  function lnkrSweepHome() {
-+    var out = ""
-+    try {
-+      out = String(Quickshell.execute(["sh", "-c",
-+        "find ~ -maxdepth 3 -type d -name linkoder 2>/dev/null | head -5"]) || "")
-+    } catch (e) { out = "" }
-+    var lines = out.split("\n")
-+    for (var i = 0; i < lines.length; i++) {
-+      var dir = String(lines[i]).trim()
-+      if (!dir) continue
-+      var ok = ""
-+      try {
-+        ok = String(Quickshell.execute(["sh", "-c", "test -f \"$1/api.js\" && echo ok", "omafile", dir]) || "")
-+      } catch (e) { ok = "" }
-+      if (ok.indexOf("ok") >= 0) {
-+        updateSetting("lnkrApiPath", dir)
-+        lnkrWarning = ""
-+        return dir
++    request({ op: "lnkrsweep" }, {
++      onDone: function (m) {
++        var dir = String(m.path || "")
++        if (dir) {
++          updateSetting("lnkrApiPath", dir)
++          lnkrWarning = ""
++        } else {
++          lnkrWarning = "Ln.Kr: the linkoder API folder was not found under your home directory"
++        }
++      },
++      onError: function (e) {
++        lnkrWarning = "Ln.Kr: the home sweep failed"
 +      }
-+    }
-+    lnkrWarning = "Ln.Kr: the linkoder API folder was not found under your home directory"
-+    return ""
++    })
 +  }
 +
-+  function lnkrEncode(path, mode) {
++  function lnkrEncode(path, mode, onDone) {
 +    var dir = lnkrApiDir()
-+    if (!dir) return ""
-+    var out = ""
-+    try {
-+      out = String(Quickshell.execute(["sh", "-c", "bun \"$1/api.js\" \"$2\" --$3 2>/dev/null",
-+        "omafile", dir, path, mode]) || "")
-+    } catch (e) { out = "" }
-+    var url = out.trim().split("\n").pop()
-+    if (!/^https:\/\//.test(url)) {
-+      lnkrWarning = "Ln.Kr: the linkoder API did not return a link"
-+      return ""
++    if (!dir) {
++      if (onDone) onDone("")
++      return
 +    }
-+    lnkrWarning = ""
-+    return url
++    request({ op: "lnkrencode", dir: dir, path: path, mode: mode }, {
++      onDone: function (m) {
++        var url = String(m.url || "")
++        if (!/^https:\/\//.test(url)) {
++          lnkrWarning = "Ln.Kr: the linkoder API did not return a link"
++          if (onDone) onDone("")
++          return
++        }
++        lnkrWarning = ""
++        if (onDone) onDone(url)
++        else lnkrOpen(url)
++      },
++      onError: function (e) {
++        lnkrWarning = "Ln.Kr: the linkoder API did not return a link"
++        if (onDone) onDone("")
++      }
++    })
 +  }
 +
 +  function lnkrOpen(url) {
@@ -65,8 +66,124 @@ index d717c98..e007162 100644
    function mountDrive(devicePath, onDone, onError) {
      return request({ op: "mountdev", device: String(devicePath) }, {
        onDone: function (m) {
+diff --git c/bin/omafile-helper w/bin/omafile-helper
+index c1a405d..6ae3650 100755
+--- c/bin/omafile-helper
++++ w/bin/omafile-helper
+@@ -4364,6 +4364,102 @@ def op_transcode(req, cancel_event):
+     send_done(req_id, outputs=outputs)
+ 
+ 
++LNKR_MODES = ("rich", "safe", "make")
++
++
++def lnkr_bun():
++    # Prefer a trusted location; fall back to the user's own PATH (bun is a
++    # user-installed tool, typically in ~/.bun/bin or a mise shim).
++    try:
++        return trusted_program("bun")
++    except FileNotFoundError:
++        pass
++    for directory in os.environ.get("PATH", "").split(os.pathsep):
++        candidate = os.path.join(directory, "bun")
++        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
++            return candidate
++    raise FileNotFoundError(errno.ENOENT, "no bun executable found")
++
++
++def op_lnkrsweep(req):
++    # Depth-3 sweep of the home directory for the literal "linkoder" folder
++    # that carries the API (must contain api.js). First hit wins.
++    req_id = req["id"]
++    home = HOME
++    found = ""
++    for dirpath, dirnames, _ in os.walk(home, topdown=True, followlinks=False):
++        rel = os.path.relpath(dirpath, home)
++        depth = 0 if rel == "." else rel.count(os.sep) + 1
++        if depth <= 2 and "linkoder" in dirnames:
++            candidate = os.path.join(dirpath, "linkoder")
++            if os.path.isfile(os.path.join(candidate, "api.js")):
++                found = candidate
++                break
++        if depth >= 3:
++            dirnames[:] = []
++    send_done(req_id, path=found)
++
++
++def op_lnkreencode(req):
++    req_id = req["id"]
++    api_dir = req.get("dir")
++    path = req.get("path")
++    mode = req.get("mode")
++    if (not isinstance(api_dir, str) or not os.path.isabs(api_dir)
++            or not isinstance(path, str) or not os.path.isabs(path)
++            or mode not in LNKR_MODES):
++        send_error(req_id, "EINVAL",
++                   "absolute dir and path and a mode (rich, safe, make) are required")
++        return
++    if not os.path.isfile(path):
++        send_error(req_id, "ENOENT", "no such file", path)
++        return
++    binary = os.path.join(api_dir, "bin", "linkodec")
++    if os.path.isfile(binary) and os.access(binary, os.X_OK):
++        cmd = [binary, path, "--" + mode]
++    else:
++        if not os.path.isfile(os.path.join(api_dir, "api.js")):
++            send_error(req_id, "ENOENT", "no linkoder API in the folder", api_dir)
++            return
++        try:
++            bun = lnkr_bun()
++        except FileNotFoundError:
++            send_error(req_id, "EUNSUPPORTED", "bun is not installed")
++            return
++        cmd = [bun, os.path.join(api_dir, "api.js"), path, "--" + mode]
++    env = trusted_env()
++    env["PATH"] = os.environ.get("PATH", "/usr/bin:/bin")
++    try:
++        proc = subprocess.run(
++            cmd,
++            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
++            env=env, timeout=120, check=False)
++    except (OSError, subprocess.TimeoutExpired) as e:
++        send_error(req_id, errno_code(e), "linkoder encode failed", path)
++        return
++    if proc.returncode != 0:
++        message = proc.stderr.decode("utf-8", "replace").strip()
++        send_error(req_id, "ELNKR", message or "linkoder encode failed", path)
++        return
++    # The native worker prints only the hashtag code; the legacy api.js
++    # prints the full URL. Reconstruct the base from the code when needed.
++    url = ""
++    for line in proc.stdout.decode("utf-8", "replace").splitlines():
++        line = line.strip()
++        if line.startswith("https://"):
++            url = line
++        elif line.startswith("#"):
++            base = ("https://app.shel.sh/make/" if line.startswith("#share:")
++                    else "https://a.shel.sh/")
++            url = base + line
++        if url:
++            break
++    if not url:
++        send_error(req_id, "ELNKR", "linkoder did not return a link", path)
++        return
++    send_done(req_id, url=url)
++
++
+ CANCELLABLE_OPS = {
+     "list": op_list,
+     "search": op_search,
+@@ -4422,6 +4518,8 @@ SIMPLE_OPS = {
+     "unwatch": op_unwatch,
+     "baricon": op_baricon,
+     "barsettings": op_barsettings,
++    "lnkrsweep": op_lnkrsweep,
++    "lnkreencode": op_lnkreencode,
+ }
+ 
+ def dispatch(req):
 diff --git c/components/Browser.qml w/components/Browser.qml
-index 2a66b2f..67031b3 100644
+index 2a66b2f..e8a54ed 100644
 --- c/components/Browser.qml
 +++ w/components/Browser.qml
 @@ -1160,6 +1160,8 @@ Item {
@@ -78,7 +195,7 @@ index 2a66b2f..67031b3 100644
        if (entry.isDir)
          items.push({ key: "opentab", label: "Open in new tab", glyph: Icons.actionGlyph("add"), hint: "Ctrl+Enter" })
        else
-@@ -1525,6 +1527,19 @@ Item {
+@@ -1525,6 +1527,20 @@ Item {
        showDialog("settings", "Settings", "", null)
      }
      else if (key === "shortcuts") showDialog("shortcuts", "Keyboard shortcuts", "", null)
@@ -87,18 +204,19 @@ index 2a66b2f..67031b3 100644
 +  function runLnkr(mode, copyOnly) {
 +    var entry = menuEntry
 +    if (!entry || !service) return
-+    var url = service.lnkrEncode(entry.path, mode)
-+    if (!url) return
 +    if (copyOnly) {
-+      var hash = url.indexOf("#") >= 0 ? url.slice(url.indexOf("#") + 1) : url
-+      service.copyToClipboardText(hash)
++      service.lnkrEncode(entry.path, mode, function (url) {
++        if (!url) return
++        var hash = url.indexOf("#") >= 0 ? url.slice(url.indexOf("#") + 1) : url
++        service.copyToClipboardText(hash)
++      })
 +      return
 +    }
-+    service.lnkrOpen(url)
++    service.lnkrEncode(entry.path, mode)
    }
    function runZoom(action) {
      if (action === "in") nudgeViewScale(0.1)
-@@ -2829,7 +2844,7 @@ Item {
+@@ -2829,7 +2845,7 @@ Item {
            anchors.rightMargin: Style.space(10)
            anchors.verticalCenter: parent.verticalCenter
            visible: text !== ""
@@ -107,7 +225,7 @@ index 2a66b2f..67031b3 100644
            color: Color.urgent
            font.family: Style.font.family
            font.pixelSize: Style.font.caption
-@@ -2890,17 +2905,18 @@ Item {
+@@ -2890,17 +2906,18 @@ Item {
              required property int index
              readonly property bool isHeader: modelData.kind === "header"
              readonly property bool isZoom: modelData.kind === "zoom"
@@ -128,7 +246,7 @@ index 2a66b2f..67031b3 100644
                color: Util.alpha(Color.menu.text, 0.15)
              }
  
-@@ -3017,6 +3033,55 @@ Item {
+@@ -3017,6 +3034,55 @@ Item {
                  }
                }
              }
@@ -142,8 +260,8 @@ index 2a66b2f..67031b3 100644
 +
 +              Repeater {
 +                model: menuRow.isLnkr ? [
-+                  { mode: "rich", label: "Ln.Kr (Rich)" },
-+                  { mode: "safe", label: "Ln.Kr (Safe)" },
++                  { mode: "rich", label: "link" },
++                  { mode: "safe", label: "safe" },
 +                  { mode: "make", label: "#share" }
 +                ] : []
 +
@@ -184,18 +302,18 @@ index 2a66b2f..67031b3 100644
            }
          }
        }
-@@ -4405,7 +4470,9 @@ Item {
+@@ -4405,7 +4471,9 @@ Item {
        { key: "rememberFolderViews", label: "Remember the view for each folder",
          description: "A folder opens in the view you last picked there. Other folders open in the default view" },
        { key: "extractOnOpen", label: "Extract archives when opened", fallback: false,
 -        description: "Double click or Enter extracts zip, tar, 7z and rar files next to themselves instead of opening them in your default app" }
 +        description: "Double click or Enter extracts zip, tar, 7z and rar files next to themselves instead of opening them in your default app" },
 +      { key: "lnkr", label: "Ln.Kr previewer links", fallback: false,
-+        description: "Show the Ln.Kr (Rich) | Ln.Kr (Safe) | Make row in the right-click menu; links open in a Helium webapp window. On first enable, omafile looks for the linkoder folder under your home directory" }
++        description: "Show the link | safe | #share row in the right-click menu; links open in a Helium webapp window. On first enable, omafile looks for the linkoder folder under your home directory" }
      ]
    }
  
-@@ -4445,6 +4512,8 @@ Item {
+@@ -4445,6 +4513,8 @@ Item {
      } else if (key === "thumbnails") {
        paneA.thumbnails = value
        if (split) paneB.thumbnails = value
@@ -205,7 +323,7 @@ index 2a66b2f..67031b3 100644
      rememberSession()
    }
 diff --git c/tests/MockService.qml w/tests/MockService.qml
-index 6d0dcfb..651c45b 100644
+index 6d0dcfb..42c8131 100644
 --- c/tests/MockService.qml
 +++ w/tests/MockService.qml
 @@ -152,6 +152,11 @@ QtObject {
@@ -215,7 +333,7 @@ index 6d0dcfb..651c45b 100644
 +  property string lnkrWarning: ""
 +  function lnkrApiDir() { record("lnkrApiDir", []); return "" }
 +  function lnkrSweepHome() { record("lnkrSweepHome", []); return "" }
-+  function lnkrEncode(path, mode) { record("lnkrEncode", [path, mode]); return "" }
++  function lnkrEncode(path, mode, onDone) { record("lnkrEncode", [path, mode]); if (onDone) onDone("") }
 +  function lnkrOpen(url) { record("lnkrOpen", [url]) }
    function emptyTrash(onDone) { record("emptyTrash", []); trashCount = 0; if (onDone) onDone({}) }
    function peekFile(path, limit, onDone, onError) { record("peekFile", [path]); onDone({ text: "key: value\n", binary: false, truncated: false }) }
