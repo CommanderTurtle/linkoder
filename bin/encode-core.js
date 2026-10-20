@@ -42,6 +42,7 @@ async function load (linkoder) {
     { executablePrefixForKind },
     { mediaLinkKind },
     { encodeSharedFile, fileMime },
+    { makeFileDataURL },
     { combineArchive, isSupportedArchive },
     { imageViewerSource },
     { videoViewerSource }
@@ -51,6 +52,7 @@ async function load (linkoder) {
     import(lnkr + "/viewer-runtime.js"),
     import(lnkr + "/link-runtime.js"),
     import(mkit + "/share.ts"),
+    import(lnkr + "/make-resource.js"),
     import(mkit + "/archiveCombine.ts"),
     import(mkit + "/imageViewer.ts"),
     import(linkoder + "/video-viewer.js")
@@ -62,6 +64,7 @@ async function load (linkoder) {
     mediaLinkKind,
     encodeSharedFile,
     fileMime,
+    makeFileDataURL,
     combineArchive,
     isSupportedArchive,
     imageViewerSource,
@@ -82,14 +85,14 @@ export async function encodeFile (job) {
   const {
     encoders, outputAlphabetASCII, executablePrefixForKind, mediaLinkKind,
     encodeSharedFile, fileMime, combineArchive, isSupportedArchive,
-    imageViewerSource, videoViewerSource
+    imageViewerSource, videoViewerSource, makeFileDataURL
   } = c;
 
   const path = job.path;
   const rich = !!job.rich;
   const safe = !!job.safe;
   const make = !!job.make;
-  const version = job.version || 1;
+  const b64Src = !!job.b64Src;
   const name = job.name || "";
   const mime = job.mime || "";
 
@@ -100,6 +103,13 @@ export async function encodeFile (job) {
   const extension = dot > 0 ? display.slice(dot + 1).toLowerCase() : "";
   const kindByExtension = { md: "markdown", markdown: "markdown", html: "html", htm: "html", js: "javascript", mjs: "javascript" };
   const kind = kindByExtension[extension] || "text";
+  // The lnkr media route (image/video/pdf/audio) defaults to v3: the most
+  // robust per browser testing (v1/v4 are the confirmed-broken ones; v2 is
+  // the post-fact fallback). Other routes keep the v1 default. An explicit
+  // --vN always wins.
+  const mediaKind = mediaLinkKind("https://linkoder.local/" + display);
+  const isMediaRoute = mediaKind === "image" || mediaKind === "video" || mediaKind === "pdf" || mediaKind === "audio";
+  const version = job.version || (isMediaRoute ? 3 : 1);
 
   const bytes = path === "-"
     ? new Uint8Array(Buffer.from(job.input || "", "base64"))
@@ -107,7 +117,6 @@ export async function encodeFile (job) {
 
   const share = (nm, by, m) => encodeSharedFile({ name: nm, mime: m || fileMime({ name: nm, type: "" }), bytes: by });
 
-  const mediaKind = mediaLinkKind("https://linkoder.local/" + display);
   const isArchive = isSupportedArchive({ name: display, type: "" });
 
   if (isArchive) {
@@ -131,6 +140,26 @@ export async function encodeFile (job) {
     return "#" + prefix + payload;
   }
   if (make) {
+    return "#share:" + share(display, bytes, mime);
+  }
+  if (b64Src) {
+    // The base64 transcoder fallback: the deflated make hashtag as src fails
+    // (deflating-a-deflate expands past the char limit), so the base64 data
+    // URL (perfected mime, via makeFileDataURL) takes the make hashtag's place
+    // as the src. Only for the custom viewers (image/video/pdf/audio); the
+    // make share link stays canonical for everything else.
+    if (mediaKind === "image" || mediaKind === "video" || mediaKind === "pdf" || mediaKind === "audio") {
+      const m = mime || fileMime({ name: display, type: "" });
+      const dataUrl = makeFileDataURL({ name: display, mime: m, bytes, text: null });
+      if (mediaKind === "image" || mediaKind === "video") {
+        const js = mediaKind === "image" ? imageViewerSource(dataUrl) : videoViewerSource(dataUrl);
+        const payload = encoders[version](js, outputAlphabetASCII, "javascript").payload;
+        const prefix = safe ? "" : executablePrefixForKind("javascript");
+        return "#" + prefix + payload;
+      }
+      const route = mediaKind === "pdf" ? "pdf" : "media";
+      return "#" + route + ":" + encoders[version](dataUrl, outputAlphabetASCII, "text").payload;
+    }
     return "#share:" + share(display, bytes, mime);
   }
   if (mediaKind === "image") {

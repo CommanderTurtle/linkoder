@@ -34,7 +34,11 @@ const SPAWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 const DRIVER: &str = r##"
 const args = Bun.argv.slice(1);
-let path = null, rich = false, safe = false, make = false, version = 1, name = "", mime = "";
+let path = null, rich = false, safe = false, make = false, version = 0, name = "", mime = "";
+// Not a user flag: the binary sets LINKODER_B64=1 when the make-hashtag-as-src
+// route overflows the char limit, to resolve the custom viewer via the base64
+// transcoder (perfected mime) in the make hashtag's place.
+const b64Src = Bun.env.LINKODER_B64 === "1";
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
   if (a === "--rich") rich = true;
@@ -63,7 +67,7 @@ if (path === "-") {
   const buf = new Uint8Array(await new Response(Bun.stdin).arrayBuffer());
   input = Buffer.from(buf).toString("base64");
 }
-const code = await encodeFile({ linkoder: LINKODER, path, input, rich, safe, make, version, name, mime });
+const code = await encodeFile({ linkoder: LINKODER, path, input, rich, safe, make, b64Src, version, name, mime });
 process.stdout.write(code + "\n");
 "##;
 
@@ -323,6 +327,7 @@ fn cold_driver(
     r: Option<&PathBuf>,
     path: &str,
     extra: &[String],
+    b64: bool,
     stdin_b64: Option<&str>,
 ) -> Result<String, ()> {
     let mut cmd = Command::new(bun);
@@ -340,6 +345,9 @@ fn cold_driver(
         if let Some(s) = rr.to_str() {
             cmd.env("LINKODER_DIR", s);
         }
+    }
+    if b64 {
+        cmd.env("LINKODER_B64", "1");
     }
     let mut child: Child = cmd.spawn().map_err(|_| ())?;
     if let Some(b) = stdin_b64 {
@@ -390,6 +398,22 @@ fn cold_driver(
 }
 
 // ---------------------------------------------------------------- main ---
+/// The 1,000,000-char cap: applies only to the make-share fallback that
+/// runs after the 20 s timer fires (the second timer resolution). Output
+/// beyond it is a clean failure.
+fn emit(code: &str) -> ExitCode {
+    let code = code.trim_end_matches('\n');
+    if code.len() > 1_000_000 {
+        eprintln!(
+            "linkodec: output exceeds 1,000,000 chars ({} chars) — clean failure",
+            code.len()
+        );
+        return ExitCode::from(1);
+    }
+    println!("{code}");
+    ExitCode::SUCCESS
+}
+
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -397,7 +421,7 @@ fn main() -> ExitCode {
     let mut rich = false;
     let mut safe = false;
     let mut make = false;
-    let mut version = 1;
+    let mut version = 0;
     let mut name = String::new();
     let mut mime = String::new();
 
@@ -470,11 +494,8 @@ fn main() -> ExitCode {
 
     // Explicit --make: straight to the (fast) share route, no timer games.
     if make {
-        match cold_driver(&bun, root.as_ref(), &file, &["--make".into()], stdin_b64.as_deref()) {
-            Ok(out) => {
-                print!("{out}");
-                return ExitCode::SUCCESS;
-            }
+        match cold_driver(&bun, root.as_ref(), &file, &["--make".into()], false, stdin_b64.as_deref()) {
+            Ok(out) => return emit(&out),
             Err(()) => return ExitCode::from(1),
         }
     }
@@ -483,17 +504,37 @@ fn main() -> ExitCode {
     if let Some(r) = &root {
         match worker_job(&bun, r, &file, &flags) {
             Ok(code) => {
-                println!("{code}");
-                return ExitCode::SUCCESS;
+                let code = code.trim_end_matches('\n').to_string();
+                if code.len() > 1_000_000 {
+                    // Char-limit failure: the make-hashtag-as-src route overflowed
+                    // (deflating-a-deflate expands). Resolve the custom viewer via
+                    // the base64 transcoder (perfected mime) in the make hashtag's
+                    // place. v3 is always handed here (the most robust per
+                    // browser testing); the 1M cap (emit) and the 20 s timer
+                    // still apply to the result.
+                    eprintln!("linkodec: char limit exceeded ({} chars), falling back to base64 transcoder", code.len());
+                    let mut extra: Vec<String> = Vec::new();
+                    if rich { extra.push("--rich".into()); }
+                    if safe { extra.push("--safe".into()); }
+                    extra.push("--v3".into());
+                    if !name.is_empty() { extra.push("--name".into()); extra.push(name); }
+                    if !mime.is_empty() { extra.push("--mime".into()); extra.push(mime); }
+                    match cold_driver(&bun, Some(r), &file, &extra, true, stdin_b64.as_deref()) {
+                        Ok(out) => return emit(&out),
+                        Err(()) => return ExitCode::from(1),
+                    }
+                }
+                return emit(&code);
             }
             Err(WorkerErr::Timeout) => {
-                // 20 s timer: fall back to a plain Make share link.
-                eprintln!("linkodec: 20 s timer, falling back to make share link");
-                match cold_driver(&bun, Some(r), &file, &["--make".into()], stdin_b64.as_deref()) {
-                    Ok(out) => {
-                        print!("{out}");
-                        return ExitCode::SUCCESS;
-                    }
+                // 20 s timer: the lnkr route (make link as src) was too slow.
+                // The make link itself resolved and survives the 1M-char test,
+                // so instead of bailing to the raw #share link, honor the lnkr
+                // request with v4 — the strongest deflate, already as optimized
+                // as the make link. The 1M cap (emit) still applies.
+                eprintln!("linkodec: 20 s timer, falling back to v4 lnkr");
+                match cold_driver(&bun, Some(r), &file, &["--v4".into()], false, stdin_b64.as_deref()) {
+                    Ok(out) => return emit(&out),
                     Err(()) => return ExitCode::from(1),
                 }
             }
@@ -506,7 +547,7 @@ fn main() -> ExitCode {
                 if safe {
                     extra.push("--safe".into());
                 }
-                if version != 1 {
+                if version != 0 {
                     extra.push(format!("--v{version}"));
                 }
                 if !name.is_empty() {
@@ -517,11 +558,8 @@ fn main() -> ExitCode {
                     extra.push("--mime".into());
                     extra.push(mime);
                 }
-                match cold_driver(&bun, Some(r), &file, &extra, stdin_b64.as_deref()) {
-                    Ok(out) => {
-                        print!("{out}");
-                        return ExitCode::SUCCESS;
-                    }
+                match cold_driver(&bun, Some(r), &file, &extra, false, stdin_b64.as_deref()) {
+                    Ok(out) => return emit(&out),
                     Err(()) => return ExitCode::from(1),
                 }
             }
@@ -532,14 +570,11 @@ fn main() -> ExitCode {
     let mut extra: Vec<String> = Vec::new();
     if rich { extra.push("--rich".into()); }
     if safe { extra.push("--safe".into()); }
-    if version != 1 { extra.push(format!("--v{version}")); }
+    if version != 0 { extra.push(format!("--v{version}")); }
     if !name.is_empty() { extra.push("--name".into()); extra.push(name); }
     if !mime.is_empty() { extra.push("--mime".into()); extra.push(mime); }
-    match cold_driver(&bun, None, &file, &extra, stdin_b64.as_deref()) {
-        Ok(out) => {
-            print!("{out}");
-            ExitCode::SUCCESS
-        }
+    match cold_driver(&bun, None, &file, &extra, false, stdin_b64.as_deref()) {
+        Ok(out) => emit(&out),
         Err(()) => ExitCode::from(1),
     }
 }

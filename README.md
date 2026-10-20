@@ -64,7 +64,11 @@ demand. All entry points (pool and cold) call the same `bin/encode-core.js`
 Each job is under a 20 s timer (binary layer): on expiry the worker's job
 is SIGKILLed, the worker respawns, and the binary falls back to a plain
 Make share link (`#share:...` via the cold `--make` route) — so a slow
-encode degrades to the deflated share envelope instead of hanging.
+encode degrades to the deflated share envelope instead of hanging. That
+fallback output is then under a 1,000,000-char cap (the second timer
+resolution): absurd media/7z/zip/tar payloads whose share code exceeds it
+are a clean failure instead of a megabyte URL. Regular utf text never gets
+close to either limit.
 
 ```
 linkodec <file|-> [--rich|--safe] [--make] [--v1|--v2|--v3|--v4] [--name NAME] [--mime MIME]
