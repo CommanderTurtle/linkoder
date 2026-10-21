@@ -17,6 +17,10 @@ prints the previewer URL:
 linkoder <file> [<file>...] [--rich | --safe | --make]
 ```
 
+`scripts/pathadd.sh` installs the commands: it symlinks `api.js` to
+`bin/linkoder` and the built binary to `bin/linkodec`, then adds `bin/`
+to the bash PATH.
+
 | Input | Output |
 |---|---|
 | `.md` / `.markdown` | `https://a.shel.sh/#<v1-v4>` — the text is encoded ephemerally with `style=jekyll` plus a newline appended |
@@ -101,7 +105,7 @@ linkodec document.pdf --v2 --safe
 - The 7z wasm resolves from the linkoder root (`wasm/7zz.wasm` symlink,
   `BASE_URL` set under `bun`), so `mk.it` stays untouched.
 
-Build: `cargo build --release` in `rust/`, then copy
+Build: `cargo build --release` in `rust/`; `scripts/pathadd.sh` symlinks
 `target/release/linkodec` to `bin/linkodec`.
 
 ## The omafile package

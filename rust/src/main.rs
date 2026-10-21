@@ -95,9 +95,26 @@ fn find_bun() -> String {
 }
 
 fn root() -> Option<PathBuf> {
-    std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().and_then(|bin| bin.parent()).map(|r| r.to_path_buf()))
+    let exe = std::env::current_exe().ok()?;
+    // Canonical layout: the binary is <root>/bin/linkodec — verify with
+    // the encode core.
+    if let Some(p) = exe.parent().and_then(|bin| bin.parent()) {
+        if p.join("bin").join("encode-core.js").is_file() {
+            return Some(p.to_path_buf());
+        }
+    }
+    // A symlink into cargo's output resolves to
+    // <root>/rust/target/release/linkodec; the repo root is four up.
+    let p = exe
+        .parent()
+        .and_then(|p| p.parent())
+        .and_then(|p| p.parent())
+        .and_then(|p| p.parent())?;
+    if p.join("bin").join("encode-core.js").is_file() {
+        Some(p.to_path_buf())
+    } else {
+        None
+    }
 }
 
 // ---------------------------------------------------------------- pool ---

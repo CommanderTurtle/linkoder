@@ -5,5 +5,3 @@ wasm/
 .encode-worker-*.sock
 .encode-worker-*.pid
 bin/
-linkoder
-linkodec
