@@ -5,27 +5,23 @@
 // produces byte-identical codes. The lateral ln.kr/mk.it modules are
 // imported once per process (warmed in the workers) and never re-implemented.
 
-import { resolve, dirname } from "node:path";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import fs from "node:fs";
+
+import { ensureWasm } from "../wasm-link.js";
 
 // Resolve the lateral roots as siblings of the linkoder root. LNKR_DOCS /
 // MKIT_TOOLS are test overrides; env is just the carrier.
 //
 // 7z-wasm locates its binary as BASE_URL + "wasm/7zz.wasm" (the vite site
 // path). Under bun that is a filesystem path, so point BASE_URL at the
-// linkoder root and keep a symlink to the mk.it package wasm there; the
-// lateral mk.it source stays untouched.
+// linkoder root and keep wasm/7zz.wasm pointed at the newest installed
+// 7z-wasm copy there (wasm-link.js); the lateral mk.it source stays untouched.
 export function lateralRoots(linkoder) {
   const lnkr = process.env.LNKR_DOCS || resolve(linkoder, "../ln.kr/docs");
   const mkit = process.env.MKIT_TOOLS || resolve(linkoder, "../mk.it/src/tools");
   if (typeof Bun !== "undefined" && !process.env.BASE_URL) {
-    const src = resolve(mkit, "../../node_modules/7z-wasm/7zz.wasm");
-    const wasm = resolve(linkoder, "wasm/7zz.wasm");
-    if (!fs.existsSync(wasm)) {
-      fs.mkdirSync(dirname(wasm), { recursive: true });
-      fs.symlinkSync(fs.existsSync(src) ? src : "/dev/null", wasm);
-    }
+    ensureWasm(linkoder, resolve(mkit, "../.."));
     process.env.BASE_URL = resolve(linkoder) + "/";
   }
   return { lnkr, mkit, linkoder };

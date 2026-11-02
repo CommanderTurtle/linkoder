@@ -34,7 +34,7 @@ const splitCode = (code) => {
 };
 const decode = (payload) => decompressText(payload, outputAlphabetASCII);
 
-const FIXTURES = ["note.md", "page.html", "app.js", "doc.pdf", "tone.mp3", "clip.mp4", "img.png", "archive.zip", "sample.7z"];
+const FIXTURES = ["note.md", "styled.md", "page.html", "app.js", "doc.pdf", "tone.mp3", "clip.mp4", "img.png", "archive.zip", "sample.7z"];
 
 test("binary and api.js agree on every route (v1 and v3)", async () => {
   for (const name of FIXTURES) {
@@ -46,12 +46,20 @@ test("binary and api.js agree on every route (v1 and v3)", async () => {
   }
 });
 
-test("markdown encodes as a markdown lnkr link with the jekyll suffix", async () => {
+test("markdown encodes as a markdown lnkr link with the first-line jekyll style", async () => {
   const { marker, payload } = splitCode(binary(FIX("note.md")));
   expect(marker).toBe("");
   const d = decode(payload);
   expect(d.kind).toBe("markdown");
-  expect(d.text).toBe((await readFile(FIX("note.md"), "utf8")) + "style=jekyll\n");
+  // ln.kr reads the style directive from the first line (repo-render.js
+  // firstLine), so that is where the encoder has to put it.
+  expect(d.text).toBe("style=jekyll\n" + await readFile(FIX("note.md"), "utf8"));
+});
+
+test("a markdown file that already designates a style keeps its own", async () => {
+  const d = decode(splitCode(binary(FIX("styled.md"))).payload);
+  expect(d.kind).toBe("markdown");
+  expect(d.text).toBe(await readFile(FIX("styled.md"), "utf8"));
 });
 
 test("html and javascript round-trip to their kinds", async () => {
@@ -72,7 +80,7 @@ test("archives decode to the combined markdown (zip and 7z)", async () => {
   expect(seven.text).toContain("## File: ./README.md");
   expect(seven.text).toContain("## File: ./docs/config.ini");
   expect(seven.text).toContain("## File: ./src.js");
-  expect(seven.text.endsWith("style=jekyll\n")).toBeTrue();
+  expect(seven.text.startsWith("style=jekyll\n")).toBeTrue();
 });
 
 test("pdf and audio carry a Make share URL as the vN payload", async () => {

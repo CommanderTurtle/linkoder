@@ -11,7 +11,10 @@ quantum future.**
 ## The API
 
 `api.js` is a bun CLI. Hand it a file with an existing extension and it
-prints the previewer URL:
+prints the previewer URL. It adds nothing but the CLI and the URL base: the
+route itself runs through the same `bin/encode-core.js` `encodeFile` the
+`linkodec` pool and cold paths call, so the code behind the URL is identical
+whichever entry point ran.
 
 ```
 linkoder <file> [<file>...] [--rich | --safe | --make]
@@ -23,7 +26,7 @@ to the bash PATH.
 
 | Input | Output |
 |---|---|
-| `.md` / `.markdown` | `https://a.shel.sh/#<v1-v4>` — the text is encoded ephemerally with `style=jekyll` plus a newline appended |
+| `.md` / `.markdown` | `https://a.shel.sh/#<v1-v4>` — the text is encoded ephemerally with `style=jekyll` on the **first line** (ln.kr reads the directive from line one), skipped when the file already designates a style |
 | `.html` / `.htm` | `https://a.shel.sh/#<v1-v4>` |
 | `.js` / other text/code | `https://a.shel.sh/#<v1-v4>` (text kind) |
 | `.pdf` | `https://a.shel.sh/#pdf:<v1-v4>` — the payload is the file's Make share URL; the static site fetches it and renders the PDF |
@@ -39,8 +42,9 @@ Flags:
   (`#m:` markdown, `#h:` html, `#r:` javascript).
 - `--make`: force the `app.shel.sh/make/#share:` envelope (the raw file, or
   the combined md for archives).
-- `--v1`..`--v4`: the lnkr text-format codec for every route (default v1,
-  the frozen wire format).
+- `--v1`..`--v4`: the lnkr text-format codec (default v1, the frozen wire
+  format; the image/video/pdf/audio routes default to v3, the most robust
+  codec per browser testing).
 
 Everything is generated with the lateral frameworks — nothing is
 reinvented here:
@@ -103,7 +107,15 @@ linkodec document.pdf --v2 --safe
   driver resolves `../ln.kr/docs` and `../mk.it/src/tools` from it;
   override with `LNKR_DOCS`/`MKIT_TOOLS`.
 - The 7z wasm resolves from the linkoder root (`wasm/7zz.wasm` symlink,
-  `BASE_URL` set under `bun`), so `mk.it` stays untouched.
+  `BASE_URL` set under `bun`), so `mk.it` stays untouched. `wasm-link.js`
+  re-points that link at the newest installed `7z-wasm` binary on every fresh
+  process: `mk.it/node_modules` first (the module bun imports while it is
+  installed), then the highest `7z-wasm@*` in `$BUN_INSTALL_CACHE_DIR`,
+  `~/.bun/install/cache`, and `~/.cache/.bun/install/cache` — so a build
+  cleanup or a dependency migration in `mk.it` self-heals instead of leaving a
+  dangling link. With no copy installed the link is simply left absent: the
+  non-archive routes need no wasm, and the archive route then reports the
+  loader's own ENOENT.
 
 Build: `cargo build --release` in `rust/`; `scripts/pathadd.sh` symlinks
 `target/release/linkodec` to `bin/linkodec`.
